@@ -2,7 +2,7 @@
 
 Current state of each feature across daemon, extension, CLI, and TUI layers.
 
-Generated from code audit on 2026-03-08. Support levels added on 2026-03-08. Last reconciled on 2026-03-09.
+Generated from code audit on 2026-03-08. Support levels added on 2026-03-08. Last reconciled on 2026-03-10.
 
 ## Legend
 
@@ -30,31 +30,31 @@ Generated from code audit on 2026-03-08. Support levels added on 2026-03-08. Las
 | tabs.update | V(fwd) | V | X | X | - | R |
 | tabs.mute | V(fwd) | V | V | V(m) | - | S |
 | tabs.pin | V(fwd) | V | V | V(p) | - | S |
-| tabs.move | V(fwd) | V | V | X | - | P |
-| tabs.getText | V(fwd) | V | X | V(v) | - | P |
-| tabs.capture | V(fwd) | V | X | V(v) | - | P |
+| tabs.move | V(fwd) | V | V | V(M) | - | S |
+| tabs.getText | V(fwd) | V | V | V(v) | - | S |
+| tabs.capture | V(fwd) | V | V | V(v) | - | S |
 
 Notes:
-- `tabs.update` 在 extension 中只处理 `pinned`，CLI/TUI 使用更具体的 `tabs.pin` 代替 -> R: 底层存在但被更具体的 action 替代
+- `tabs.update` 在 extension 中只处理 `pinned`，CLI/TUI 使用更具体的 `tabs.pin` 代替 -> R
 - TUI tab preview `v` 循环三种模式：info / text(getText) / screenshot(capture)
 - TUI `P` 键启动 w3m/lynx 预览
-- `tabs.move` 有 CLI 但无 TUI handler -> P
-- `tabs.getText` / `tabs.capture` 有 TUI 但无 CLI -> P
+- TUI `M` 键移动 tab 到指定 window
+- TUI `A` 键将选中 tab(s) 添加到 collection
+- CLI `tabs text <id>` 提取页面文本；`tabs capture <id> -o file.png` 截图
 
 ## Groups
 
 | Action | Daemon | Extension | CLI | TUI | Tests | Level |
 |--------|--------|-----------|-----|-----|-------|-------|
 | groups.list | V(fwd) | V | V | V(3) | V | S |
-| groups.create | V(fwd) | V | V | X | - | P |
-| groups.update | V(fwd) | V | X | V(Enter) | - | P |
-| groups.delete | V(fwd) | V | X | X | - | R |
+| groups.create | V(fwd) | V | V | V(n) | - | S |
+| groups.update | V(fwd) | V | V | V(Enter) | - | S |
+| groups.delete | V(fwd) | V | V | V(DD) | - | S |
 
 Notes:
-- `groups.list` 完整路径: CLI `groups list` + TUI view 3 -> S
-- `groups.create` 有 CLI `groups create` 但无 TUI handler -> P
-- `groups.update` TUI Enter 切换 expand/collapse，但无 CLI 命令 -> P
-- `groups.delete` 无 CLI 无 TUI，仅 daemon 转发 -> R
+- TUI `n` 创建分组，`DD` 删除分组
+- CLI `groups update <id> --title --color`，`groups delete <id>`
+- 4 个 action 均有 daemon + CLI + TUI -> 全部 S
 
 ## Sessions
 
@@ -78,15 +78,17 @@ Notes:
 | collections.list | V | - | V | V(5) | V | S |
 | collections.get | V | - | V | V(Enter) | V | S |
 | collections.create | V | - | V | V(n) | V | S |
-| collections.addItems | V | - | V | X | V | P |
-| collections.removeItems | V | - | X | X | V | R |
+| collections.addItems | V | - | V | V(A) | V | S |
+| collections.removeItems | V | - | V | V(x) | V | S |
 | collections.restore | V | V* | V | V(o) | V | S |
 | collections.delete | V | - | V | V(DD) | V | S |
 
 Notes:
 - * collections.restore 通过 extension tabs.open 执行
-- `collections.addItems` 有 daemon handler + CLI `collections add` 但无 TUI handler -> P
-- `collections.removeItems` 有 daemon handler 但无 CLI 也无 TUI -> R
+- TUI `A` 键（在 Tabs 视图）将选中 tab(s) 添加到指定 collection
+- TUI `x` 键（在展开的 collection 嵌套 tab 上）移除单个 item
+- CLI `collections remove-items <name> --urls <url1,url2,...>`
+- 7 个 action 均有 daemon + CLI + TUI -> 全部 S
 
 ## Targets
 
@@ -98,9 +100,8 @@ Notes:
 | targets.label | V | - | V | V(l) | V | S |
 
 Notes:
-- `targets.clearDefault` 有 daemon + CLI + TUI `c` 键 -> S
-- `targets.label` 有 daemon + CLI + TUI `l` 键 -> S
 - targets 状态在 Hub actor 内存管理，不持久化
+- 4 个 action 全部 S
 
 ## Bookmarks
 
@@ -123,8 +124,6 @@ Notes:
 - bookmarks.tree 同时更新本地 mirror
 - TUI bookmarks view 支持 tree fold/unfold (Enter, zM, zR)
 - Extension 发送 bookmarks.created / bookmarks.changed / bookmarks.removed 事件
-- `bookmarks.export` 有 daemon + CLI + TUI `E` 键（复制到剪贴板）-> S
-- `bookmarks.create` 有 daemon + CLI + TUI `a` 键 -> S
 - `bookmarks.get` / `bookmarks.update` / `bookmarks.move` 无 CLI 无 TUI -> R
 - `bookmarks.overlay.set` / `bookmarks.overlay.get` 仅 daemon handler + 测试 -> R
 
@@ -133,17 +132,17 @@ Notes:
 | Action | Daemon | Extension | CLI | TUI | Tests | Level |
 |--------|--------|-----------|-----|-----|-------|-------|
 | workspace.list | V | - | V | V(7) | V | S |
-| workspace.get | V | - | V | X | V | P |
+| workspace.get | V | - | V | V(Enter) | V | S |
 | workspace.create | V | - | V | V(n) | V | S |
-| workspace.update | V | - | X | X | V | R |
+| workspace.update | V | - | V | V(e) | V | S |
 | workspace.delete | V | - | V | V(DD) | V | S |
-| workspace.switch | V | V* | V | V(Enter) | V | S |
+| workspace.switch | V | V* | V | V(o) | V | S |
 
 Notes:
 - * workspace.switch 通过 extension 执行：先 tabs.list + tabs.close 关闭所有 tab，再 tabs.open + groups.create 恢复首个 session
-- workspace.update 支持 name/description/sessions/collections/bookmarkFolderIds/savedSearchIds/tags/notes/status/defaultTarget
-- `workspace.get` 有 daemon + CLI 但无 TUI -> P
-- `workspace.update` 仅 daemon handler + 测试，无 CLI 无 TUI -> R
+- TUI Enter = inspect (显示 workspace 详情)，`o` = switch，`e` = 编辑名称
+- CLI `workspace update <id> --name --description --status`
+- 6 个 action 全部 S
 
 ## Search
 
@@ -200,12 +199,12 @@ Notes:
 | Action | Daemon | Extension | CLI | TUI | Tests | Level |
 |--------|--------|-----------|-----|-----|-------|-------|
 | sync.status | V | - | V | V(8) | V | S |
-| sync.repair | V | - | V | X | V | P |
+| sync.repair | V | - | V | V(R) | V | S |
 
 Notes:
-- TUI Sync view (按 `8`) 显示同步状态，`r` 刷新
+- TUI Sync view (按 `8`) 显示同步状态，`r` 刷新，`R` 执行 repair
 - iCloud sync engine 对 sessions/collections/workspaces 目录做文件级同步
-- `sync.repair` 有 daemon + CLI 但无 TUI -> P
+- 2 个 action 全部 S
 
 ## Daemon Control
 
@@ -235,38 +234,30 @@ Notes:
 
 ## Support Level Summary
 
-### S (Supported) -- 41 actions
+### S (Supported) -- 52 actions
 完整用户路径，可作为产品承诺:
-- **Tabs**: list, open, close, activate, mute, pin (6)
-- **Groups**: list (1)
+- **Tabs**: list, open, close, activate, mute, pin, move, getText, capture (9)
+- **Groups**: list, create, update, delete (4)
 - **Sessions**: list, get, save, restore, delete (5)
-- **Collections**: list, get, create, restore, delete (5)
+- **Collections**: list, get, create, addItems, removeItems, restore, delete (7)
 - **Targets**: list, default, clearDefault, label (4)
-- **Bookmarks**: tree, search, mirror, remove, export, create (6)
-- **Workspaces**: list, create, delete, switch (4)
+- **Bookmarks**: tree, search, mirror, create, remove, export (6)
+- **Workspaces**: list, get, create, update, delete, switch (6)
 - **Search**: query, saved.list, saved.create, saved.delete (4)
-- **Sync**: status (1)
+- **Sync**: status, repair (2)
 - **History**: search, delete (2)
 - **Downloads**: list, cancel (2)
 - **Daemon**: subscribe (1)
 - **Events**: 8 event types (全部 S，不计入 action 总数)
 
-### P (Partial) -- 8 actions
-底层存在但用户路径不完整:
-- **Tabs**: move (CLI only), getText/capture (TUI only) (3)
-- **Groups**: create (CLI only), update (TUI only) (2)
-- **Collections**: addItems (CLI only) (1)
-- **Workspaces**: get (CLI only) (1)
-- **Sync**: repair (CLI only) (1)
+### P (Partial) -- 0 actions
+无
 
-### R (Reserved) -- 14 actions
+### R (Reserved) -- 11 actions
 底层预留或实验性:
 - **Tabs**: update (被 pin/mute 替代) (1)
-- **Groups**: delete (仅 daemon 转发) (1)
-- **Collections**: removeItems (仅 daemon handler) (1)
 - **Bookmarks**: get, update, move, overlay.set, overlay.get (仅 daemon handler) (5)
-- **Workspaces**: update (仅 daemon handler) (1)
-- **Windows**: list, create, close, focus (仅 daemon 转发，内部被 sessions.restore / workspace.switch 使用) (4)
+- **Windows**: list, create, close, focus (内部管道，被 sessions.restore / workspace.switch 使用) (4)
 - **Daemon**: stop (仅内部请求，无 CLI/TUI) (1)
 
 ---
@@ -274,19 +265,12 @@ Notes:
 ## Coverage Gaps Summary
 
 ### CLI 缺失命令 (有 daemon handler 但无 CLI)
-- `groups update`, `groups delete`
-- `windows list`, `windows create`, `windows close`
+- `windows list`, `windows create`, `windows close`, `windows focus`
 - `bookmarks update`, `bookmarks move`, `bookmarks get`
 - `bookmarks overlay set`, `bookmarks overlay get`
-- `workspace update`
-- `tabs getText`, `tabs capture`
-- `collections removeItems`
 
 ### TUI 缺失操作 (有 daemon handler / CLI 但无 TUI handler)
-- Collections: `collections.addItems` 无 TUI 操作
 - Bookmarks: overlay 无 TUI 操作
-- Workspace: get/update 无 TUI 操作
-- Sync: repair 无 TUI 操作
 
 ### 测试缺失
 - tabs.mute, tabs.pin, tabs.move, tabs.getText, tabs.capture: 无单元测试
@@ -294,4 +278,5 @@ Notes:
 - bookmarks.update, bookmarks.move: 无单元测试
 - history.search, history.delete: 无单元测试
 - downloads.list, downloads.cancel: 无单元测试
-- windows.list, windows.create, windows.close: 无单元测试
+- windows.list, windows.create, windows.close, windows.focus: 无单元测试
+- collections.addItems, collections.removeItems: 无单元测试 (daemon handler 级)

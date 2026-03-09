@@ -167,13 +167,50 @@ var workspaceSwitchCmd = &cobra.Command{
 	},
 }
 
+var workspaceUpdateName string
+var workspaceUpdateDescription string
+var workspaceUpdateStatus string
+
+var workspaceUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a workspace's name, description, or status",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		payload := map[string]any{"id": args[0]}
+		if cmd.Flags().Changed("name") {
+			payload["name"] = workspaceUpdateName
+		}
+		if cmd.Flags().Changed("description") {
+			payload["description"] = workspaceUpdateDescription
+		}
+		if cmd.Flags().Changed("status") {
+			payload["status"] = workspaceUpdateStatus
+		}
+		resp, err := connectAndRequest("workspace.update", payload, targetSelector())
+		if err != nil {
+			return err
+		}
+		if workspaceJSONOutput {
+			printJSON(resp.Payload)
+			return nil
+		}
+		fmt.Printf("Workspace %q updated.\n", args[0])
+		return nil
+	},
+}
+
 func init() {
 	workspaceCmd.PersistentFlags().BoolVar(&workspaceJSONOutput, "json", false, "Output as JSON")
+
+	workspaceUpdateCmd.Flags().StringVar(&workspaceUpdateName, "name", "", "New workspace name")
+	workspaceUpdateCmd.Flags().StringVar(&workspaceUpdateDescription, "description", "", "New workspace description")
+	workspaceUpdateCmd.Flags().StringVar(&workspaceUpdateStatus, "status", "", "New workspace status (active, archived, template)")
 
 	workspaceCmd.AddCommand(workspaceListCmd)
 	workspaceCmd.AddCommand(workspaceGetCmd)
 	workspaceCmd.AddCommand(workspaceCreateCmd)
 	workspaceCmd.AddCommand(workspaceDeleteCmd)
 	workspaceCmd.AddCommand(workspaceSwitchCmd)
+	workspaceCmd.AddCommand(workspaceUpdateCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }

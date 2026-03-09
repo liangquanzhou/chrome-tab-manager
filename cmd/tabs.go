@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -222,6 +224,81 @@ var tabsMoveCmd = &cobra.Command{
 	},
 }
 
+var tabsTextCmd = &cobra.Command{
+	Use:   "text <tabId>",
+	Short: "Get visible text content of a tab",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tabID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid tab ID %q: %w", args[0], err)
+		}
+		resp, err := connectAndRequest("tabs.getText", map[string]any{"tabId": tabID}, targetSelector())
+		if err != nil {
+			return err
+		}
+		if tabsJSONOutput {
+			printJSON(resp.Payload)
+			return nil
+		}
+		var result struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(resp.Payload, &result); err != nil {
+			return fmt.Errorf("parse response: %w", err)
+		}
+		fmt.Print(result.Text)
+		return nil
+	},
+}
+
+var tabsCaptureOutput string
+
+var tabsCaptureCmd = &cobra.Command{
+	Use:   "capture <tabId>",
+	Short: "Capture a screenshot of a tab",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tabID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid tab ID %q: %w", args[0], err)
+		}
+		resp, err := connectAndRequest("tabs.capture", map[string]any{"tabId": tabID}, targetSelector())
+		if err != nil {
+			return err
+		}
+		if tabsJSONOutput {
+			printJSON(resp.Payload)
+			return nil
+		}
+		var result struct {
+			DataURL string `json:"dataUrl"`
+		}
+		if err := json.Unmarshal(resp.Payload, &result); err != nil {
+			return fmt.Errorf("parse response: %w", err)
+		}
+		if tabsCaptureOutput != "" {
+			// Decode base64 data URL and write to file
+			// Format: data:image/png;base64,<data>
+			idx := strings.Index(result.DataURL, ",")
+			if idx < 0 {
+				return fmt.Errorf("invalid data URL format")
+			}
+			decoded, err := base64.StdEncoding.DecodeString(result.DataURL[idx+1:])
+			if err != nil {
+				return fmt.Errorf("decode base64: %w", err)
+			}
+			if err := os.WriteFile(tabsCaptureOutput, decoded, 0644); err != nil {
+				return fmt.Errorf("write file: %w", err)
+			}
+			fmt.Printf("Screenshot saved to %s (%d bytes).\n", tabsCaptureOutput, len(decoded))
+			return nil
+		}
+		fmt.Println(result.DataURL)
+		return nil
+	},
+}
+
 func init() {
 	tabsCmd.PersistentFlags().BoolVar(&tabsJSONOutput, "json", false, "Output as JSON")
 
@@ -233,6 +310,8 @@ func init() {
 	tabsMoveCmd.Flags().IntVar(&tabsMoveWindowID, "window", 0, "Target window ID")
 	tabsMoveCmd.Flags().IntVar(&tabsMoveIndex, "index", -1, "Target index position")
 
+	tabsCaptureCmd.Flags().StringVarP(&tabsCaptureOutput, "output", "o", "", "Save screenshot to file (PNG)")
+
 	tabsCmd.AddCommand(tabsListCmd)
 	tabsCmd.AddCommand(tabsOpenCmd)
 	tabsCmd.AddCommand(tabsCloseCmd)
@@ -240,5 +319,7 @@ func init() {
 	tabsCmd.AddCommand(tabsMuteCmd)
 	tabsCmd.AddCommand(tabsPinCmd)
 	tabsCmd.AddCommand(tabsMoveCmd)
+	tabsCmd.AddCommand(tabsTextCmd)
+	tabsCmd.AddCommand(tabsCaptureCmd)
 	rootCmd.AddCommand(tabsCmd)
 }

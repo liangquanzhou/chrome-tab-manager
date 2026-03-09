@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -377,11 +378,31 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.view == ViewDownloads {
 			return a, a.cancelDownload()
 		}
+		if a.view == ViewCollections {
+			vs := a.currentView()
+			idx := vs.realIndex(vs.cursor)
+			if idx < len(vs.items) {
+				if nested, ok := vs.items[idx].(NestedTabItem); ok {
+					return a, a.doRequest("collections.removeItems", map[string]any{
+						"name": nested.ParentName,
+						"urls": []string{nested.URL},
+					}, func(_ json.RawMessage) {
+						a.toast = fmt.Sprintf("Removed %q from %q", truncate(nested.Title, 20), nested.ParentName)
+					})
+				}
+			}
+		}
 	case "n":
 		if a.view == ViewSessions || a.view == ViewCollections || a.view == ViewWorkspaces {
 			a.mode = ModeNameInput
 			a.nameText = ""
 			a.namePrompt = "Name: "
+			return a, nil
+		}
+		if a.view == ViewGroups {
+			a.mode = ModeNameInput
+			a.nameText = ""
+			a.namePrompt = "Group name: "
 			return a, nil
 		}
 		if a.view == ViewSearch && a.searchActive && a.lastSearchQuery != "" {
@@ -391,6 +412,9 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 	case "o":
+		if a.view == ViewWorkspaces {
+			return a, a.switchWorkspace()
+		}
 		return a, a.handleRestore()
 	case "D":
 		if a.view == ViewSessions || a.view == ViewCollections || a.view == ViewWorkspaces {
@@ -398,6 +422,16 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			name := a.currentItemName()
 			a.confirmHint = fmt.Sprintf("Press D again to delete %q", name)
 			return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+		}
+		if a.view == ViewGroups {
+			vs := a.currentView()
+			idx := vs.realIndex(vs.cursor)
+			if idx < len(vs.items) {
+				g := vs.items[idx].(GroupItem)
+				a.mode = ModeConfirmDelete
+				a.confirmHint = fmt.Sprintf("Press D again to delete group %q", g.Title)
+				return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+			}
 		}
 		if a.view == ViewBookmarks {
 			vs := a.currentView()
@@ -481,6 +515,33 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return a, tea.Batch(a.fetchTabPreview(), tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} }))
 			}
 			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+		}
+	case "M":
+		if a.view == ViewTabs {
+			a.mode = ModeNameInput
+			a.nameText = ""
+			a.namePrompt = "Move to window: "
+			return a, nil
+		}
+	case "A":
+		if a.view == ViewTabs {
+			a.mode = ModeNameInput
+			a.nameText = ""
+			a.namePrompt = "Add to collection: "
+			return a, nil
+		}
+	case "R":
+		if a.view == ViewSync {
+			return a, a.doRequest("sync.repair", nil, func(_ json.RawMessage) {
+				a.toast = "Sync repair completed"
+			})
+		}
+	case "e":
+		if a.view == ViewWorkspaces {
+			a.mode = ModeNameInput
+			a.nameText = ""
+			a.namePrompt = "New name: "
+			return a, nil
 		}
 	case "P":
 		if a.view == ViewTabs {
@@ -653,8 +714,68 @@ func (a *App) handleNameInputKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 			return a, a.createCollection(name)
 		}
 		if a.view == ViewWorkspaces {
+			if a.namePrompt == "New name: " {
+				// workspace.update (rename)
+				vs := a.currentView()
+				idx := vs.realIndex(vs.cursor)
+				if idx < len(vs.items) {
+					ws := vs.items[idx].(WorkspaceItem)
+					return a, a.doRequest("workspace.update", map[string]any{"id": ws.ID, "name": name}, func(_ json.RawMessage) {
+						a.toast = fmt.Sprintf("Renamed workspace to %q", name)
+					})
+				}
+				return a, nil
+			}
 			return a, a.doRequest("workspace.create", map[string]any{"name": name}, func(_ json.RawMessage) {
 				a.toast = fmt.Sprintf("Workspace %q created", name)
+			})
+		}
+		if a.view == ViewGroups {
+			// groups.create requires tabIds; create with title only (empty tabIds for named group)
+			return a, a.doRequest("groups.create", map[string]any{"title": name}, func(_ json.RawMessage) {
+				a.toast = fmt.Sprintf("Created group %q", name)
+			})
+		}
+		if a.view == ViewTabs && a.namePrompt == "Move to window: " {
+			windowID, err := strconv.Atoi(name)
+			if err != nil {
+				a.errorMsg = "Invalid window ID"
+				return a, nil
+			}
+			vs := a.views[ViewTabs]
+			idx := vs.realIndex(vs.cursor)
+			if idx < len(vs.items) {
+				tab := vs.items[idx].(TabItem)
+				return a, a.doRequest("tabs.move", map[string]any{"tabId": tab.ID, "windowId": windowID}, func(_ json.RawMessage) {
+					a.toast = fmt.Sprintf("Moved tab to window %d", windowID)
+				})
+			}
+			return a, nil
+		}
+		if a.view == ViewTabs && a.namePrompt == "Add to collection: " {
+			vs := a.views[ViewTabs]
+			var items []map[string]string
+			if len(vs.selected) > 0 {
+				for idx := range vs.selected {
+					if idx < len(vs.items) {
+						tab := vs.items[idx].(TabItem)
+						items = append(items, map[string]string{"url": tab.URL, "title": tab.Title})
+					}
+				}
+				vs.selected = make(map[int]bool)
+			} else {
+				idx := vs.realIndex(vs.cursor)
+				if idx < len(vs.items) {
+					tab := vs.items[idx].(TabItem)
+					items = append(items, map[string]string{"url": tab.URL, "title": tab.Title})
+				}
+			}
+			if len(items) == 0 {
+				return a, nil
+			}
+			itemCount := len(items)
+			return a, a.doRequest("collections.addItems", map[string]any{"name": name, "items": items}, func(_ json.RawMessage) {
+				a.toast = fmt.Sprintf("Added %d tab(s) to %q", itemCount, name)
 			})
 		}
 		if a.view == ViewTargets {
@@ -905,6 +1026,19 @@ func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 			}
 			return refreshMsg{payload: resp.Payload}
 		}
+	}
+
+	// Groups: delete by groupId
+	if a.view == ViewGroups {
+		vs := a.currentView()
+		idx := vs.realIndex(vs.cursor)
+		if idx < len(vs.items) {
+			g := vs.items[idx].(GroupItem)
+			return a, a.doRequest("groups.delete", map[string]any{"groupId": g.ID}, func(_ json.RawMessage) {
+				a.toast = fmt.Sprintf("Deleted group %q", g.Title)
+			})
+		}
+		return a, nil
 	}
 
 	// Views that delete by name
@@ -1373,13 +1507,20 @@ func (a *App) handleEnter() tea.Cmd {
 	case ViewWorkspaces:
 		if idx < len(vs.items) {
 			ws := vs.items[idx].(WorkspaceItem)
-			return a.doRequest("workspace.switch", map[string]any{"id": ws.ID}, func(payload json.RawMessage) {
-				var result struct {
-					TabsClosed int `json:"tabsClosed"`
-					TabsOpened int `json:"tabsOpened"`
+			wsID, wsName := ws.ID, ws.Name
+			return a.doRequest("workspace.get", map[string]any{"id": wsID}, func(payload json.RawMessage) {
+				var detail struct {
+					Workspace struct {
+						Sessions    []string `json:"sessions"`
+						Collections []string `json:"collections"`
+						Description string   `json:"description"`
+						Status      string   `json:"status"`
+					} `json:"workspace"`
 				}
-				json.Unmarshal(payload, &result)
-				a.toast = fmt.Sprintf("Switched to %q (closed %d, opened %d)", ws.Name, result.TabsClosed, result.TabsOpened)
+				json.Unmarshal(payload, &detail)
+				w := detail.Workspace
+				a.toast = fmt.Sprintf("%s: %d sessions, %d collections, status=%s",
+					wsName, len(w.Sessions), len(w.Collections), w.Status)
 			})
 		}
 	case ViewSessions:
@@ -1763,6 +1904,26 @@ func (a *App) saveSession(name string) tea.Cmd {
 func (a *App) createCollection(name string) tea.Cmd {
 	return a.doRequest("collections.create", map[string]string{"name": name}, func(_ json.RawMessage) {
 		a.toast = fmt.Sprintf("Created collection %q", name)
+	})
+}
+
+func (a *App) switchWorkspace() tea.Cmd {
+	vs := a.views[ViewWorkspaces]
+	if vs.visibleCount() == 0 {
+		return nil
+	}
+	idx := vs.realIndex(vs.cursor)
+	if idx >= len(vs.items) {
+		return nil
+	}
+	ws := vs.items[idx].(WorkspaceItem)
+	return a.doRequest("workspace.switch", map[string]any{"id": ws.ID}, func(payload json.RawMessage) {
+		var result struct {
+			TabsClosed int `json:"tabsClosed"`
+			TabsOpened int `json:"tabsOpened"`
+		}
+		json.Unmarshal(payload, &result)
+		a.toast = fmt.Sprintf("Switched to %q (closed %d, opened %d)", ws.Name, result.TabsClosed, result.TabsOpened)
 	})
 }
 

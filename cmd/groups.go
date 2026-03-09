@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -97,6 +98,57 @@ var groupsCreateCmd = &cobra.Command{
 	},
 }
 
+var groupsUpdateTitle string
+var groupsUpdateColor string
+
+var groupsUpdateCmd = &cobra.Command{
+	Use:   "update <groupId>",
+	Short: "Update a tab group's title or color",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		groupID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid group ID %q: %w", args[0], err)
+		}
+		payload := map[string]any{"groupId": groupID}
+		if cmd.Flags().Changed("title") {
+			payload["title"] = groupsUpdateTitle
+		}
+		if cmd.Flags().Changed("color") {
+			payload["color"] = groupsUpdateColor
+		}
+		resp, err := connectAndRequest("groups.update", payload, targetSelector())
+		if err != nil {
+			return err
+		}
+		if groupsJSONOutput {
+			printJSON(resp.Payload)
+			return nil
+		}
+		fmt.Printf("Group %d updated.\n", groupID)
+		return nil
+	},
+}
+
+var groupsDeleteCmd = &cobra.Command{
+	Use:   "delete <groupId>",
+	Short: "Delete a tab group (ungroups its tabs)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		groupID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid group ID %q: %w", args[0], err)
+		}
+		payload := map[string]any{"groupId": groupID}
+		_, err = connectAndRequest("groups.delete", payload, targetSelector())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Group %d deleted.\n", groupID)
+		return nil
+	},
+}
+
 func init() {
 	groupsCmd.PersistentFlags().BoolVar(&groupsJSONOutput, "json", false, "Output as JSON")
 
@@ -105,7 +157,12 @@ func init() {
 	groupsCreateCmd.Flags().StringVar(&groupsCreateColor, "color", "", "Group color (grey, blue, red, yellow, green, pink, purple, cyan, orange)")
 	_ = groupsCreateCmd.MarkFlagRequired("title")
 
+	groupsUpdateCmd.Flags().StringVar(&groupsUpdateTitle, "title", "", "New group title")
+	groupsUpdateCmd.Flags().StringVar(&groupsUpdateColor, "color", "", "New group color (grey, blue, red, yellow, green, pink, purple, cyan)")
+
 	groupsCmd.AddCommand(groupsListCmd)
 	groupsCmd.AddCommand(groupsCreateCmd)
+	groupsCmd.AddCommand(groupsUpdateCmd)
+	groupsCmd.AddCommand(groupsDeleteCmd)
 	rootCmd.AddCommand(groupsCmd)
 }

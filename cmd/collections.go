@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -194,6 +195,41 @@ var collectionsRestoreCmd = &cobra.Command{
 	},
 }
 
+var collectionsRemoveURLs string
+
+var collectionsRemoveItemsCmd = &cobra.Command{
+	Use:   "remove-items <name>",
+	Short: "Remove items from a collection by URL",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if collectionsRemoveURLs == "" {
+			return fmt.Errorf("--urls is required")
+		}
+		urls := strings.Split(collectionsRemoveURLs, ",")
+		payload := map[string]any{
+			"name": args[0],
+			"urls": urls,
+		}
+		resp, err := connectAndRequest("collections.removeItems", payload, targetSelector())
+		if err != nil {
+			return err
+		}
+		if collectionsJSONOutput {
+			printJSON(resp.Payload)
+			return nil
+		}
+		var result struct {
+			Name      string `json:"name"`
+			ItemCount int    `json:"itemCount"`
+		}
+		if err := json.Unmarshal(resp.Payload, &result); err != nil {
+			return fmt.Errorf("parse response: %w", err)
+		}
+		fmt.Printf("Removed from %q (%d items remaining).\n", result.Name, result.ItemCount)
+		return nil
+	},
+}
+
 func init() {
 	collectionsCmd.PersistentFlags().BoolVar(&collectionsJSONOutput, "json", false, "Output as JSON")
 
@@ -202,11 +238,15 @@ func init() {
 	_ = collectionsAddCmd.MarkFlagRequired("url")
 	_ = collectionsAddCmd.MarkFlagRequired("title")
 
+	collectionsRemoveItemsCmd.Flags().StringVar(&collectionsRemoveURLs, "urls", "", "Comma-separated URLs to remove (required)")
+	_ = collectionsRemoveItemsCmd.MarkFlagRequired("urls")
+
 	collectionsCmd.AddCommand(collectionsListCmd)
 	collectionsCmd.AddCommand(collectionsGetCmd)
 	collectionsCmd.AddCommand(collectionsCreateCmd)
 	collectionsCmd.AddCommand(collectionsDeleteCmd)
 	collectionsCmd.AddCommand(collectionsAddCmd)
 	collectionsCmd.AddCommand(collectionsRestoreCmd)
+	collectionsCmd.AddCommand(collectionsRemoveItemsCmd)
 	rootCmd.AddCommand(collectionsCmd)
 }

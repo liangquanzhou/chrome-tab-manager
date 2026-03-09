@@ -66,7 +66,7 @@ var ActionRegistry = []ActionMeta{
 	{"collections.create", LayerLocal, TargetDisallowed, CLISupported},
 	{"collections.delete", LayerLocal, TargetDisallowed, CLISupported},
 	{"collections.addItems", LayerLocal, TargetDisallowed, CLISupported},
-	{"collections.removeItems", LayerLocal, TargetDisallowed, CLIInternal}, // no CLI command
+	{"collections.removeItems", LayerLocal, TargetDisallowed, CLISupported},
 	{"collections.restore", LayerHybrid, TargetRequired, CLISupported},
 
 	// --- Bookmarks (cmd/bookmarks.go) ---
@@ -92,7 +92,7 @@ var ActionRegistry = []ActionMeta{
 	{"workspace.list", LayerLocal, TargetDisallowed, CLISupported},
 	{"workspace.get", LayerLocal, TargetDisallowed, CLISupported},
 	{"workspace.create", LayerLocal, TargetDisallowed, CLISupported},
-	{"workspace.update", LayerLocal, TargetDisallowed, CLIInternal}, // no CLI command
+	{"workspace.update", LayerLocal, TargetDisallowed, CLISupported},
 	{"workspace.delete", LayerLocal, TargetDisallowed, CLISupported},
 	{"workspace.switch", LayerHybrid, TargetRequired, CLISupported},
 
@@ -110,14 +110,14 @@ var ActionRegistry = []ActionMeta{
 	{"tabs.mute", LayerForward, TargetRequired, CLISupported},
 	{"tabs.pin", LayerForward, TargetRequired, CLISupported},
 	{"tabs.move", LayerForward, TargetRequired, CLISupported},
-	{"tabs.getText", LayerForward, TargetRequired, CLIInternal},    // TUI only
-	{"tabs.capture", LayerForward, TargetRequired, CLIInternal},    // TUI only
+	{"tabs.getText", LayerForward, TargetRequired, CLISupported},
+	{"tabs.capture", LayerForward, TargetRequired, CLISupported},
 
 	// --- Browser runtime: Groups (cmd/groups.go) ---
 	{"groups.list", LayerForward, TargetRequired, CLISupported},
 	{"groups.create", LayerForward, TargetRequired, CLISupported},
-	{"groups.update", LayerForward, TargetRequired, CLIInternal},   // no CLI command
-	{"groups.delete", LayerForward, TargetRequired, CLIInternal},   // no CLI command
+	{"groups.update", LayerForward, TargetRequired, CLISupported},
+	{"groups.delete", LayerForward, TargetRequired, CLISupported},
 
 	// --- Browser runtime: Windows (no CLI commands) ---
 	{"windows.list", LayerForward, TargetRequired, CLIInternal},

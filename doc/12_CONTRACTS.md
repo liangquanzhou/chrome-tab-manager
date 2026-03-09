@@ -345,7 +345,7 @@
 
 - Layer: forward
 - Target: required
-- CLI: internal only
+- CLI: supported
 - Request:
   - tabId: int, required
 - Response:
@@ -365,7 +365,7 @@
 
 - Layer: forward
 - Target: required
-- CLI: internal only
+- CLI: supported
 - Request:
   - tabId: int, optional, tab to capture (activates it first if provided)
   - windowId: int, optional, window to capture (current window if omitted)
@@ -518,7 +518,7 @@
 
 - Layer: forward
 - Target: required
-- CLI: internal only
+- CLI: supported
 - Request:
   - groupId: int, required
   - title: string, optional
@@ -541,7 +541,7 @@
 
 - Layer: forward
 - Target: required
-- CLI: internal only
+- CLI: supported
 - Request:
   - groupId: int, required
 - Response:
@@ -779,7 +779,7 @@
 
 - Layer: local
 - Target: disallowed
-- CLI: internal only
+- CLI: supported
 - Request:
   - name: string, required
   - urls: string[], required, URLs to remove
@@ -1334,7 +1334,7 @@
 
 - Layer: local
 - Target: disallowed
-- CLI: internal only
+- CLI: supported
 - Request:
   - id: string, required
   - name: string, optional (pointer semantics: omit to keep, set to change)

@@ -45,6 +45,8 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"v", "toggle preview"},
 			{"s", "screenshot"},
 			{"P", "w3m preview"},
+			{"M", "move to window"},
+			{"A", "add to collection"},
 			{"Space", "select"},
 			{"u", "clear selection"},
 			{"y·", "yank/copy"},
@@ -53,6 +55,8 @@ func bindingsForView(v ViewType) []KeyBinding {
 	case ViewGroups:
 		return []KeyBinding{
 			{"Enter", "expand/collapse"},
+			{"n", "create"},
+			{"D D", "delete"},
 		}
 	case ViewSessions:
 		return []KeyBinding{
@@ -66,6 +70,7 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"Enter", "expand"},
 			{"o", "restore"},
 			{"n", "create new"},
+			{"x", "remove item"},
 			{"D D", "delete"},
 		}
 	case ViewTargets:
@@ -90,13 +95,16 @@ func bindingsForView(v ViewType) []KeyBinding {
 		}
 	case ViewWorkspaces:
 		return []KeyBinding{
-			{"Enter", "switch"},
+			{"Enter", "inspect"},
+			{"o", "switch"},
 			{"n", "create new"},
+			{"e", "edit name"},
 			{"D D", "delete"},
 		}
 	case ViewSync:
 		return []KeyBinding{
 			{"r", "refresh status"},
+			{"R", "repair"},
 		}
 	case ViewHistory:
 		return []KeyBinding{
