@@ -75,16 +75,17 @@ Notes:
 
 | Action | Daemon | Extension | CLI | TUI | Tests | Level |
 |--------|--------|-----------|-----|-----|-------|-------|
-| collections.list | V | - | V | V(5) | V | S |
+| collections.list | V | V** | V | V(5) | V | S |
 | collections.get | V | - | V | V(Enter) | V | S |
 | collections.create | V | - | V | V(n) | V | S |
-| collections.addItems | V | - | V | V(A) | V | S |
+| collections.addItems | V | V** | V | V(A) | V | S |
 | collections.removeItems | V | - | V | V(x) | V | S |
 | collections.restore | V | V* | V | V(o) | V | S |
 | collections.delete | V | - | V | V(DD) | V | S |
 
 Notes:
 - * collections.restore 通过 extension tabs.open 执行
+- ** collections.list / addItems: extension 通过 NM 向 daemon 发送请求（local-layer actions），用于右键菜单 "Add to CTM Collection"
 - TUI `A` 键（在 Tabs 视图）将选中 tab(s) 添加到指定 collection
 - TUI `x` 键（在展开的 collection 嵌套 tab 上）移除单个 item
 - CLI `collections remove-items <name> --urls <url1,url2,...>`

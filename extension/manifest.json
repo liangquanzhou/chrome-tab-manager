@@ -13,7 +13,8 @@
     "scripting",
     "nativeMessaging",
     "debugger",
-    "activeTab"
+    "activeTab",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"

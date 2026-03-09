@@ -41,6 +41,9 @@ let reconnectTimer = null;
 /** True while a connect attempt is in progress */
 let connecting = false;
 
+/** @type {Map<string, {resolve: Function, reject: Function}>} Pending outgoing requests */
+const pendingRequests = new Map();
+
 // ---------------------------------------------------------------------------
 // UUID generation
 // ---------------------------------------------------------------------------
@@ -191,14 +194,29 @@ function onNativeMessage(msg) {
     return;
   }
 
-  // Hello response: capture our target ID
+  // Hello response: capture our target ID and build context menu
   if (msg.type === "response" && msg.action === "hello") {
     if (msg.payload && msg.payload.targetId) {
       targetId = msg.payload.targetId;
       log("Registered as target:", targetId);
+      refreshCollectionsMenu();
     } else {
       warn("Hello response missing targetId");
     }
+    return;
+  }
+
+  // Resolve pending outgoing requests
+  if (msg.type === "response" && pendingRequests.has(msg.id)) {
+    const { resolve } = pendingRequests.get(msg.id);
+    pendingRequests.delete(msg.id);
+    resolve(msg.payload);
+    return;
+  }
+  if (msg.type === "error" && pendingRequests.has(msg.id)) {
+    const { reject } = pendingRequests.get(msg.id);
+    pendingRequests.delete(msg.id);
+    reject(new Error(msg.error?.message || "Unknown error"));
     return;
   }
 
@@ -1148,6 +1166,115 @@ chrome.bookmarks.onRemoved.addListener((id, removeInfo) => {
     id,
     removeInfo,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Outgoing requests to daemon
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a request to the daemon and return a Promise for the response.
+ * @param {string} action - Action name (e.g. "collections.list")
+ * @param {object} [payload] - Request payload
+ * @returns {Promise<object>} - Response payload
+ */
+function sendDaemonRequest(action, payload) {
+  return new Promise((resolve, reject) => {
+    const id = makeId();
+    pendingRequests.set(id, { resolve, reject });
+    sendRaw({
+      id,
+      protocol_version: PROTOCOL_VERSION,
+      type: "request",
+      action,
+      payload: payload || {},
+    });
+    // Timeout after 10 seconds
+    setTimeout(() => {
+      if (pendingRequests.has(id)) {
+        pendingRequests.delete(id);
+        reject(new Error(`Request ${action} timed out`));
+      }
+    }, 10000);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Context Menu — Add to Collection
+// ---------------------------------------------------------------------------
+
+const MENU_PARENT_ID = "ctm-add-to-collection";
+
+/**
+ * Fetch collections from daemon and rebuild the context menu.
+ */
+async function refreshCollectionsMenu() {
+  try {
+    await chrome.contextMenus.removeAll();
+  } catch (_) {}
+
+  try {
+    const result = await sendDaemonRequest("collections.list", {});
+    const collections = result.collections || [];
+
+    chrome.contextMenus.create({
+      id: MENU_PARENT_ID,
+      title: "Add to CTM Collection",
+      contexts: ["page", "link"],
+    });
+
+    if (collections.length === 0) {
+      chrome.contextMenus.create({
+        id: "ctm-no-collections",
+        parentId: MENU_PARENT_ID,
+        title: "(no collections)",
+        enabled: false,
+        contexts: ["page", "link"],
+      });
+    } else {
+      for (const col of collections) {
+        chrome.contextMenus.create({
+          id: `ctm-col:${col.name}`,
+          parentId: MENU_PARENT_ID,
+          title: `${col.name} (${col.itemCount})`,
+          contexts: ["page", "link"],
+        });
+      }
+    }
+
+    log(`Collections menu built: ${collections.length} item(s)`);
+  } catch (err) {
+    warn("Failed to build collections menu:", err.message);
+  }
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const menuId = String(info.menuItemId);
+  if (!menuId.startsWith("ctm-col:")) return;
+
+  const collectionName = menuId.slice("ctm-col:".length);
+
+  // Determine URL and title from context
+  let url, title;
+  if (info.linkUrl) {
+    url = info.linkUrl;
+    title = info.selectionText || info.linkUrl;
+  } else {
+    url = tab.url;
+    title = tab.title || tab.url;
+  }
+
+  try {
+    await sendDaemonRequest("collections.addItems", {
+      name: collectionName,
+      items: [{ url, title }],
+    });
+    log(`Added to "${collectionName}": ${title}`);
+    // Refresh menu to update item counts
+    refreshCollectionsMenu();
+  } catch (err) {
+    warn(`Failed to add to "${collectionName}":`, err.message);
+  }
 });
 
 // ---------------------------------------------------------------------------
