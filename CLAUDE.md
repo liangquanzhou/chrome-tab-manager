@@ -1,6 +1,12 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # CTM Project — AI Coding Rules
 
 **CTM = terminal-first browser workspace manager**
+
+单二进制 Go 程序，通过 Chrome Extension + Native Messaging + Unix Socket 实现终端对浏览器的完整控制、长期资源管理、跨设备同步。
 
 产品四层模型（见 `doc/01_PRODUCT.md`）：
 1. Browser Runtime Layer — 控制浏览器运行态（tabs/groups/windows/targets）
@@ -9,6 +15,77 @@
 4. Interaction Layer — CLI + TUI + 命令面板
 
 本文件是 AI agent 编码时的硬性约束。每次动手写代码前必须读。
+
+## 构建与测试命令
+
+```bash
+# 构建
+go build ./...
+
+# 静态检查
+go vet ./...
+
+# 单元测试（必须带 -race）
+go test -race ./...
+
+# 单个包测试
+go test -race ./internal/protocol/
+go test -race ./internal/config/
+go test -race ./internal/client/
+
+# Fuzz 测试
+go test -fuzz=FuzzNDJSON ./internal/protocol/ -fuzztime=30s
+go test -fuzz=FuzzNMFrame ./internal/nmshim/ -fuzztime=30s
+
+# 运行
+go run . version
+go run . daemon --foreground
+go run . tui
+```
+
+## 架构概览
+
+```
+Chrome Extension (JS, 不变)
+    |
+    | Chrome Native Messaging (stdin/stdout, 4-byte length prefix)
+    |
+ctm nm-shim (Go)
+    |
+    | NDJSON over Unix socket
+    |
+ctm daemon (Go, 长驻进程, Hub actor 模式)
+    |
+    +--- ctm tui (Bubble Tea, 持久连接)
+    +--- ctm CLI (cobra, 一次性连接)
+```
+
+所有组件编译为同一个二进制 `ctm`，cobra 子命令区分角色。
+
+### 模块依赖图
+
+```
+cmd/ → internal/tui, internal/client, internal/daemon, internal/config
+internal/tui → internal/protocol, internal/config (禁止 import daemon)
+internal/client → internal/protocol, internal/config
+internal/daemon → internal/protocol, internal/config
+internal/nmshim → internal/protocol, internal/config
+internal/protocol → nothing (叶节点)
+internal/config → nothing (叶节点)
+```
+
+### 技术栈
+
+| 用途 | 库 |
+|------|-----|
+| CLI | `cobra` |
+| TUI | `bubbletea` + `lipgloss` + `bubbles` |
+| 剪贴板 | `atotto/clipboard` |
+| JSON | 标准库（禁止第三方 JSON 库） |
+
+### 当前 Phase
+
+以 `doc/18_CURRENT_PHASE.md` 为准。Phase 定义见 `doc/11_PLAN.md`。
 
 ## 必读文档（按优先级）
 

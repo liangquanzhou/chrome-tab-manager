@@ -1,37 +1,43 @@
 # CTM — Current Phase
 
-## Phase 1: 骨架 + 协议 + Client
+## Status: Post-Phase 8 — Consolidation Round (收口轮)
 
-### 目标
+Phase 1-8 全部完成。当前处于**收口轮 (Consolidation Round)**：daemon contract + CLI 路径做稳，统一真相源。
 
-建立 Go 项目骨架，实现协议编解码和 client 连接层。完成后应该能编译、跑通协议测试、通过 mock server 验证 client 连接。
+### Phase 完成回顾
 
-### 当前只做
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| 1 | 骨架 + 协议 + Client | DONE |
+| 2 | Daemon (Hub actor + target + sessions/collections + subscribe) | DONE |
+| 3 | NM Shim + Install | DONE |
+| 4 | CLI (tabs/groups/sessions/collections/targets) | DONE |
+| 5 | TUI (Bubble Tea, 9 views, vim nav, chords, 三通道反馈) | DONE |
+| 6 | 分发 (GoReleaser + Makefile) | DONE |
+| 7 | Bookmarks (mirror/overlay/export/tree/search/create/remove) | DONE |
+| 8 | Search + Workspace + Sync | DONE |
 
-- `go mod init` + cobra CLI 骨架（root, version, daemon, tui 子命令）
-- `internal/config/` — 路径解析（ConfigDir, SocketPath, SessionsDir, CollectionsDir）
-- `internal/protocol/` — 消息类型定义、NDJSON 读写、ID 生成
-- `internal/client/` — 连接 daemon、发请求、收响应、超时处理
-- 单元测试：协议 round-trip、NDJSON 多条/空行/截断、fuzz、ID 唯一性、config 路径、client 连接
+### 收口轮已完成
 
-### 明确不做
+- daemon contract 收口：`12_CONTRACTS.md` 为 authoritative contract（9 项模板）
+- typed error 全面覆盖：sentinel error 扩展到全部 daemon 错误路径
+- Action registry：`internal/daemon/registry.go` 为 canonical action inventory
+- CLI 行为统一：exit code 0-4 分层、`--json` payload-only
+- Doctor 运行时诊断：socket → daemon request → extension → manifest 内容校验
 
-- Daemon 实现（Phase 2）
-- NM Shim（Phase 3）
-- CLI 命令（Phase 4）
-- TUI（Phase 5）
-- 分发（Phase 6）
-- 任何 Stage 3-8 的功能（Bookmarks / Sync / Search / Workspace / Power）
-- Chrome Extension 修改
+### Canonical 真相源
 
-### Exit Criteria
+**以下来源为权威，不要在本文档中重复其内容：**
 
-完整测试表和手动验证清单见 `13_ACCEPTANCE.md` Phase 1 部分（测试 1.1-1.10 + 手动验证 3 项）。
+| 信息 | 权威来源 |
+|------|----------|
+| Action 列表与 CLI 暴露 | `internal/daemon/registry.go` |
+| Action wire format | `doc/12_CONTRACTS.md` |
+| 支持等级 (S/P/R) | `doc/19_CAPABILITY_MATRIX.md` |
+| 测试覆盖率 | `go test -cover ./...`（不手写，随时运行获取） |
+| 当前代码规模 | `find internal cmd -name '*.go' | wc -l`（不手写） |
 
-### 设计约束（为后续 Phase 预留）
+### 待推进
 
-即使 Phase 1 不实现后续功能，设计必须满足：
-- 持久对象预留 UUID + `createdAt` + `updatedAt` 字段
-- 消息路由可扩展（action string 不硬编码 switch）
-- ViewType 用 iota，预留 8 个视图位
-- protocol_version 字段存在，用于未来 hello 握手
+- **P -> S 提升**: 将高价值的 P 级 action 补齐用户路径（详见 `19_CAPABILITY_MATRIX.md`）
+- **Release 产品化**: `.goreleaser.yml` 从模板值改为真实发布配置

@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "CTM - Chrome Tab Manager",
+  "description": "Terminal-first browser workspace manager",
+  "version": "1.0.0",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "bookmarks",
+    "history",
+    "downloads",
+    "scripting",
+    "nativeMessaging",
+    "debugger",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "icons": {}
+}

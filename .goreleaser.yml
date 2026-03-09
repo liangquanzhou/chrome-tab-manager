@@ -1,0 +1,53 @@
+version: 2
+
+project_name: ctm
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - main: .
+    binary: ctm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X ctm/cmd.Version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# brews:
+#   Homebrew tap not configured yet. Uncomment and fill in when a
+#   public GitHub repo and tap repository are available.
+#   - repository:
+#       owner: <github-owner>
+#       name: homebrew-ctm
+#     homepage: "https://github.com/<github-owner>/chrome-tab-manager"
+#     description: "Terminal-first browser workspace manager"
+#     license: MIT
+#     install: |
+#       bin.install "ctm"
+#     post_install: |
+#       system "#{bin}/ctm", "install"
+#     test: |
+#       system "#{bin}/ctm", "version"

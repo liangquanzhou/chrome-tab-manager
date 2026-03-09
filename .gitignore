@@ -1,0 +1,12 @@
+# Build output
+ctm
+*.exe
+
+# Test output
+cover.out
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
