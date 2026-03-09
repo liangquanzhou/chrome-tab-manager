@@ -19,6 +19,15 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "commands": {
+    "add-to-collection": {
+      "suggested_key": {
+        "default": "Alt+Shift+C",
+        "mac": "Alt+Shift+C"
+      },
+      "description": "Add current page to a CTM collection"
+    }
+  },
   "background": {
     "service_worker": "service-worker.js"
   },

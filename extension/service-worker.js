@@ -159,10 +159,29 @@ function scheduleReconnect() {
 
 /**
  * Send a hello message to register this extension as a target.
+ * Uses pendingRequests so the response is matched by ID (daemon responses
+ * do not include an action field).
  */
 function sendHello() {
-  const msg = {
-    id: makeId(),
+  const id = makeId();
+
+  pendingRequests.set(id, {
+    resolve: (payload) => {
+      if (payload && payload.targetId) {
+        targetId = payload.targetId;
+        log("Registered as target:", targetId);
+        refreshCollectionsMenu();
+      } else {
+        warn("Hello response missing targetId");
+      }
+    },
+    reject: (err) => {
+      warn("Hello handshake failed:", err.message);
+    },
+  });
+
+  sendRaw({
+    id,
     protocol_version: PROTOCOL_VERSION,
     type: "hello",
     action: "hello",
@@ -174,9 +193,8 @@ function sendHello() {
       capabilities: ["tabs", "groups", "bookmarks", "history", "downloads", "windows", "events"],
       min_supported: PROTOCOL_VERSION,
     },
-  };
+  });
 
-  sendRaw(msg);
   log("Hello sent");
 }
 
@@ -194,19 +212,7 @@ function onNativeMessage(msg) {
     return;
   }
 
-  // Hello response: capture our target ID and build context menu
-  if (msg.type === "response" && msg.action === "hello") {
-    if (msg.payload && msg.payload.targetId) {
-      targetId = msg.payload.targetId;
-      log("Registered as target:", targetId);
-      refreshCollectionsMenu();
-    } else {
-      warn("Hello response missing targetId");
-    }
-    return;
-  }
-
-  // Resolve pending outgoing requests
+  // Resolve pending outgoing requests (including hello handshake)
   if (msg.type === "response" && pendingRequests.has(msg.id)) {
     const { resolve } = pendingRequests.get(msg.id);
     pendingRequests.delete(msg.id);
@@ -1275,6 +1281,149 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } catch (err) {
     warn(`Failed to add to "${collectionName}":`, err.message);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Keyboard Shortcut — Add to Collection Picker
+// ---------------------------------------------------------------------------
+
+/**
+ * Inject a lightweight collection picker overlay into the active tab.
+ * The user clicks a collection name; the content script sends a message
+ * back to the service worker to complete the add.
+ *
+ * @param {string[]} collections - Collection names to show
+ */
+function showCollectionPicker(collections) {
+  // Remove existing picker if any
+  const existing = document.getElementById("ctm-collection-picker");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "ctm-collection-picker";
+  overlay.style.cssText =
+    "position:fixed;top:0;left:0;right:0;bottom:0;" +
+    "background:rgba(0,0,0,0.45);z-index:2147483647;" +
+    "display:flex;align-items:flex-start;justify-content:center;" +
+    "padding-top:80px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;";
+
+  const box = document.createElement("div");
+  box.style.cssText =
+    "background:#fff;border-radius:10px;padding:16px 12px;" +
+    "min-width:280px;max-height:420px;overflow-y:auto;" +
+    "box-shadow:0 8px 32px rgba(0,0,0,0.28);";
+
+  const heading = document.createElement("div");
+  heading.textContent = "Add to Collection";
+  heading.style.cssText =
+    "font-size:15px;font-weight:600;color:#333;margin-bottom:10px;padding:0 4px;";
+  box.appendChild(heading);
+
+  let focusIdx = 0;
+  const items = [];
+
+  collections.forEach((name, i) => {
+    const row = document.createElement("div");
+    row.textContent = name;
+    row.style.cssText =
+      "padding:9px 10px;cursor:pointer;border-radius:6px;" +
+      "margin:2px 0;font-size:14px;color:#222;";
+    row.addEventListener("mouseenter", () => {
+      focusIdx = i;
+      highlightItem();
+    });
+    row.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "ctm-pick-collection", name });
+      overlay.remove();
+    });
+    items.push(row);
+    box.appendChild(row);
+  });
+
+  function highlightItem() {
+    items.forEach((el, i) => {
+      el.style.background = i === focusIdx ? "#e8f0fe" : "transparent";
+    });
+  }
+  highlightItem();
+
+  function onKey(e) {
+    if (e.key === "Escape") {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey, true);
+      e.stopPropagation();
+    } else if (e.key === "ArrowDown" || e.key === "j") {
+      focusIdx = (focusIdx + 1) % items.length;
+      highlightItem();
+      e.preventDefault();
+    } else if (e.key === "ArrowUp" || e.key === "k") {
+      focusIdx = (focusIdx - 1 + items.length) % items.length;
+      highlightItem();
+      e.preventDefault();
+    } else if (e.key === "Enter") {
+      const name = collections[focusIdx];
+      chrome.runtime.sendMessage({ type: "ctm-pick-collection", name });
+      overlay.remove();
+      document.removeEventListener("keydown", onKey, true);
+      e.preventDefault();
+    }
+  }
+  document.addEventListener("keydown", onKey, true);
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey, true);
+    }
+  });
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "add-to-collection") return;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+
+  try {
+    const result = await sendDaemonRequest("collections.list", {});
+    const names = (result.collections || []).map((c) => c.name);
+
+    if (names.length === 0) {
+      warn("Shortcut: no collections available");
+      return;
+    }
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: showCollectionPicker,
+      args: [names],
+    });
+  } catch (err) {
+    warn("Shortcut: failed to show picker:", err.message);
+  }
+});
+
+// Handle picker selection from content script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type !== "ctm-pick-collection") return;
+
+  const tab = sender.tab;
+  if (!tab) return;
+
+  sendDaemonRequest("collections.addItems", {
+    name: message.name,
+    items: [{ url: tab.url, title: tab.title || tab.url }],
+  })
+    .then(() => {
+      log(`Picker: added to "${message.name}": ${tab.title}`);
+      refreshCollectionsMenu();
+    })
+    .catch((err) => {
+      warn(`Picker: failed to add to "${message.name}":`, err.message);
+    });
 });
 
 // ---------------------------------------------------------------------------
