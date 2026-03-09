@@ -152,8 +152,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleMouse(msg)
 
 	case refreshMsg:
-		a.applyRefresh(msg.payload)
-		return a, a.waitForEvent()
+		if msg.payload != nil {
+			a.applyRefresh(msg.payload)
+			return a, a.waitForEvent()
+		}
+		// nil payload = action completed without refresh data (delete, subscribe, etc.)
+		// trigger an explicit re-fetch so the list updates immediately
+		return a, tea.Batch(a.refreshCurrentView(), a.waitForEvent())
 
 	case eventMsg:
 		return a, tea.Batch(a.refreshCurrentView(), a.waitForEvent())
