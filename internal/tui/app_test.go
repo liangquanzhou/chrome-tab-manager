@@ -2825,3 +2825,98 @@ func TestViewRendersTargetItems(t *testing.T) {
 		t.Error("View() should contain target label 'Main'")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Bookmark DD delete flow
+// ---------------------------------------------------------------------------
+
+func TestBookmarkDD_FirstD_RootNodeBlocked(t *testing.T) {
+	a := newTestApp()
+	a.view = ViewBookmarks
+	vs := a.views[ViewBookmarks]
+	// Only Chrome's invisible root node (id "0") is blocked
+	vs.items = []any{
+		BookmarkItem{ID: "0", Title: "", Depth: 0, IsFolder: true},
+	}
+	vs.itemCount = 1
+
+	model, _ := a.Update(keyRune('D'))
+	a = model.(*App)
+
+	if a.mode == ModeConfirmDelete {
+		t.Error("root node (id 0) should NOT enter ModeConfirmDelete")
+	}
+	if a.errorMsg == "" {
+		t.Error("should show error message for root node deletion")
+	}
+}
+
+func TestBookmarkDD_FirstD_TopFolderAllowed(t *testing.T) {
+	a := newTestApp()
+	a.view = ViewBookmarks
+	vs := a.views[ViewBookmarks]
+	// Top-level folders like "Bookmarks Bar" (id "1") should be deletable
+	vs.items = []any{
+		BookmarkItem{ID: "1", Title: "Bookmarks Bar", Depth: 0, IsFolder: true},
+	}
+	vs.itemCount = 1
+
+	model, _ := a.Update(keyRune('D'))
+	a = model.(*App)
+
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("top-level folder should enter ModeConfirmDelete, got mode=%d", a.mode)
+	}
+}
+
+func TestBookmarkDD_FirstD_RegularBookmark(t *testing.T) {
+	a := newTestApp()
+	a.view = ViewBookmarks
+	vs := a.views[ViewBookmarks]
+	vs.items = []any{
+		BookmarkItem{ID: "1", Title: "Bookmarks Bar", Depth: 0, IsFolder: true},
+		BookmarkItem{ID: "42", Title: "Example", URL: "https://example.com", Depth: 1},
+	}
+	vs.itemCount = 2
+	vs.cursor = 1 // cursor on the regular bookmark
+
+	model, _ := a.Update(keyRune('D'))
+	a = model.(*App)
+
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete (%d)", a.mode, ModeConfirmDelete)
+	}
+	if !strings.Contains(a.confirmHint, "Example") {
+		t.Errorf("confirmHint = %q, should contain bookmark title", a.confirmHint)
+	}
+}
+
+func TestBookmarkDD_SecondD_TriggersDelete(t *testing.T) {
+	a := newTestApp()
+	a.view = ViewBookmarks
+	vs := a.views[ViewBookmarks]
+	vs.items = []any{
+		BookmarkItem{ID: "1", Title: "Bookmarks Bar", Depth: 0, IsFolder: true},
+		BookmarkItem{ID: "42", Title: "Example", URL: "https://example.com", Depth: 1},
+	}
+	vs.itemCount = 2
+	vs.cursor = 1
+
+	// First D → ModeConfirmDelete
+	model, _ := a.Update(keyRune('D'))
+	a = model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Fatalf("after first D: mode = %d, want ModeConfirmDelete", a.mode)
+	}
+
+	// Second D → should return a non-nil cmd (the delete command)
+	model, cmd := a.Update(keyRune('D'))
+	a = model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("after second D: mode = %d, want ModeNormal (%d)", a.mode, ModeNormal)
+	}
+	if cmd == nil {
+		t.Error("after second D: cmd should not be nil (delete should be initiated)")
+	}
+}

@@ -443,9 +443,9 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			idx := vs.realIndex(vs.cursor)
 			if idx < len(vs.items) {
 				bm := vs.items[idx].(BookmarkItem)
-				// Chrome permanent root folders (Bookmarks Bar, Other Bookmarks, etc.) cannot be deleted
-				if bm.IsFolder && bm.Depth == 0 {
-					a.errorMsg = fmt.Sprintf("%q is a Chrome root folder and cannot be deleted", bm.Title)
+				// Only Chrome's invisible root (id "0") is truly undeletable
+				if bm.ID == "0" {
+					a.errorMsg = "Chrome root node cannot be deleted"
 					return a, nil
 				}
 				a.mode = ModeConfirmDelete
@@ -1035,9 +1035,8 @@ func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		bm := vs.items[idx].(BookmarkItem)
-		// Guard: root folders cannot be deleted
-		if bm.IsFolder && bm.Depth == 0 {
-			a.errorMsg = fmt.Sprintf("%q is a Chrome root folder and cannot be deleted", bm.Title)
+		if bm.ID == "0" {
+			a.errorMsg = "Chrome root node cannot be deleted"
 			return a, nil
 		}
 		target := a.targetSelector()
