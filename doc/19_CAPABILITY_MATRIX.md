@@ -111,9 +111,9 @@ Notes:
 | bookmarks.get | V(fwd) | V | X | X | - | R |
 | bookmarks.mirror | V | V* | V | V(r) | V | S |
 | bookmarks.export | V | - | V | V(E) | V | S |
-| bookmarks.create | V(fwd) | V | V | V(a) | - | S |
+| bookmarks.create | V(fwd) | V | V | V(a) | V | S |
 | bookmarks.update | V(fwd) | V | X | X | - | R |
-| bookmarks.remove | V(fwd) | V | V | V(DD) | - | S |
+| bookmarks.remove | V(fwd) | V | V | V(DD) | V | S |
 | bookmarks.move | V(fwd) | V | X | X | - | R |
 | bookmarks.overlay.set | V | - | X | X | V | R |
 | bookmarks.overlay.get | V | - | X | X | V | R |
@@ -291,7 +291,7 @@ Notes:
 ### 测试缺失
 - tabs.mute, tabs.pin, tabs.move, tabs.getText, tabs.capture: 无单元测试
 - groups.create, groups.update, groups.delete: 无单元测试
-- bookmarks.create, bookmarks.update, bookmarks.remove, bookmarks.move: 无单元测试
+- bookmarks.update, bookmarks.move: 无单元测试
 - history.search, history.delete: 无单元测试
 - downloads.list, downloads.cancel: 无单元测试
 - windows.list, windows.create, windows.close: 无单元测试

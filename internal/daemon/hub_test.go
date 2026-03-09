@@ -3430,6 +3430,80 @@ func TestHubForwardExplicitBadTarget(t *testing.T) {
 }
 
 // ===========================================================================
+// 34a. bookmarks.remove forward test
+// ===========================================================================
+
+func TestBookmarksRemoveForward(t *testing.T) {
+	env := newTestEnv(t)
+	mockExtension(t, env.sockPath, func(msg *protocol.Message) any {
+		if msg.Action == "bookmarks.remove" {
+			var p map[string]string
+			json.Unmarshal(msg.Payload, &p)
+			if p["id"] == "" {
+				return nil // extension wouldn't get this; daemon validates first
+			}
+			return map[string]any{"removed": true}
+		}
+		return nil
+	})
+
+	_, cliR, cliW := dial(t, env.sockPath)
+
+	// Happy path: remove a bookmark by ID
+	resp := request(t, cliW, cliR, "bookmarks.remove", map[string]string{"id": "42"})
+	if resp.Type != protocol.TypeResponse {
+		t.Fatalf("expected response, got %s: %s", resp.Type, string(resp.Payload))
+	}
+	var payload map[string]any
+	json.Unmarshal(resp.Payload, &payload)
+	if removed, _ := payload["removed"].(bool); !removed {
+		t.Errorf("expected removed=true, got %v", payload)
+	}
+}
+
+func TestBookmarksRemoveNoTarget(t *testing.T) {
+	env := newTestEnv(t)
+	// No extension connected
+	_, cliR, cliW := dial(t, env.sockPath)
+	resp := request(t, cliW, cliR, "bookmarks.remove", map[string]string{"id": "42"})
+	if resp.Type != protocol.TypeError {
+		t.Fatal("expected error when no target connected")
+	}
+}
+
+// ===========================================================================
+// 34b. bookmarks.create forward test
+// ===========================================================================
+
+func TestBookmarksCreateForward(t *testing.T) {
+	env := newTestEnv(t)
+	mockExtension(t, env.sockPath, func(msg *protocol.Message) any {
+		if msg.Action == "bookmarks.create" {
+			return map[string]any{
+				"id":    "99",
+				"title": "Test",
+				"url":   "https://example.com",
+			}
+		}
+		return nil
+	})
+
+	_, cliR, cliW := dial(t, env.sockPath)
+	resp := request(t, cliW, cliR, "bookmarks.create", map[string]any{
+		"title": "Test",
+		"url":   "https://example.com",
+	})
+	if resp.Type != protocol.TypeResponse {
+		t.Fatalf("expected response, got %s", resp.Type)
+	}
+	var payload map[string]any
+	json.Unmarshal(resp.Payload, &payload)
+	if payload["id"] != "99" {
+		t.Errorf("expected id=99, got %v", payload["id"])
+	}
+}
+
+// ===========================================================================
 // 34. handleCollectionsList / handleSessionsList / handleWorkspaceList error path
 // ===========================================================================
 
