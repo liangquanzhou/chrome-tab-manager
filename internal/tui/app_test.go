@@ -2401,15 +2401,18 @@ func TestUpdateKeyNEntersNameInputInCollections(t *testing.T) {
 	}
 }
 
-func TestUpdateKeyNDoesNothingInTabs(t *testing.T) {
+func TestUpdateKeyNEntersGroupCreateInTabs(t *testing.T) {
 	a := newTestApp()
 	a.view = ViewTabs
 
 	model, _ := a.Update(keyRune('n'))
 	a = model.(*App)
 
-	if a.mode == ModeNameInput {
-		t.Errorf("'n' in Tabs view should not enter ModeNameInput")
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput after 'n' in Tabs view (group selected)", a.mode)
+	}
+	if a.namePrompt != "Group name: " {
+		t.Errorf("namePrompt = %q, want %q", a.namePrompt, "Group name: ")
 	}
 }
 

@@ -158,7 +158,7 @@ func init() {
 	_ = groupsCreateCmd.MarkFlagRequired("title")
 
 	groupsUpdateCmd.Flags().StringVar(&groupsUpdateTitle, "title", "", "New group title")
-	groupsUpdateCmd.Flags().StringVar(&groupsUpdateColor, "color", "", "New group color (grey, blue, red, yellow, green, pink, purple, cyan)")
+	groupsUpdateCmd.Flags().StringVar(&groupsUpdateColor, "color", "", "New group color (grey, blue, red, yellow, green, pink, purple, cyan, orange)")
 
 	groupsCmd.AddCommand(groupsListCmd)
 	groupsCmd.AddCommand(groupsCreateCmd)

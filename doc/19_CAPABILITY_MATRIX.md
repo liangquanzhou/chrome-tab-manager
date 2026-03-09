@@ -47,12 +47,12 @@ Notes:
 | Action | Daemon | Extension | CLI | TUI | Tests | Level |
 |--------|--------|-----------|-----|-----|-------|-------|
 | groups.list | V(fwd) | V | V | V(3) | V | S |
-| groups.create | V(fwd) | V | V | V(n) | - | S |
+| groups.create | V(fwd) | V | V | V(n in Tabs) | - | S |
 | groups.update | V(fwd) | V | V | V(Enter) | - | S |
 | groups.delete | V(fwd) | V | V | V(DD) | - | S |
 
 Notes:
-- TUI `n` 创建分组，`DD` 删除分组
+- TUI `n` 在 Tabs 视图中将选中 tab(s) 创建为分组，`DD` 删除分组
 - CLI `groups update <id> --title --color`，`groups delete <id>`
 - 4 个 action 均有 daemon + CLI + TUI -> 全部 S
 

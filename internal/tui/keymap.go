@@ -47,6 +47,7 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"P", "w3m preview"},
 			{"M", "move to window"},
 			{"A", "add to collection"},
+			{"n", "group selected"},
 			{"Space", "select"},
 			{"u", "clear selection"},
 			{"y·", "yank/copy"},
@@ -55,7 +56,6 @@ func bindingsForView(v ViewType) []KeyBinding {
 	case ViewGroups:
 		return []KeyBinding{
 			{"Enter", "expand/collapse"},
-			{"n", "create"},
 			{"D D", "delete"},
 		}
 	case ViewSessions:

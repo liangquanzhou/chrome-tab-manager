@@ -255,15 +255,19 @@ var tabsTextCmd = &cobra.Command{
 var tabsCaptureOutput string
 
 var tabsCaptureCmd = &cobra.Command{
-	Use:   "capture <tabId>",
-	Short: "Capture a screenshot of a tab",
-	Args:  cobra.ExactArgs(1),
+	Use:   "capture [tabId]",
+	Short: "Capture a screenshot of a tab (defaults to active tab)",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		tabID, err := strconv.Atoi(args[0])
-		if err != nil {
-			return fmt.Errorf("invalid tab ID %q: %w", args[0], err)
+		payload := map[string]any{}
+		if len(args) > 0 {
+			tabID, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid tab ID %q: %w", args[0], err)
+			}
+			payload["tabId"] = tabID
 		}
-		resp, err := connectAndRequest("tabs.capture", map[string]any{"tabId": tabID}, targetSelector())
+		resp, err := connectAndRequest("tabs.capture", payload, targetSelector())
 		if err != nil {
 			return err
 		}

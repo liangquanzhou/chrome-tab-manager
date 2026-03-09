@@ -399,7 +399,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.namePrompt = "Name: "
 			return a, nil
 		}
-		if a.view == ViewGroups {
+		if a.view == ViewTabs {
 			a.mode = ModeNameInput
 			a.nameText = ""
 			a.namePrompt = "Group name: "
@@ -730,10 +730,34 @@ func (a *App) handleNameInputKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 				a.toast = fmt.Sprintf("Workspace %q created", name)
 			})
 		}
-		if a.view == ViewGroups {
-			// groups.create requires tabIds; create with title only (empty tabIds for named group)
-			return a, a.doRequest("groups.create", map[string]any{"title": name}, func(_ json.RawMessage) {
-				a.toast = fmt.Sprintf("Created group %q", name)
+		if a.view == ViewTabs && a.namePrompt == "Group name: " {
+			// groups.create: collect selected tabs (or current tab) as tabIds
+			vs := a.views[ViewTabs]
+			var tabIDs []int
+			if len(vs.selected) > 0 {
+				for idx := range vs.selected {
+					if idx < len(vs.items) {
+						tab := vs.items[idx].(TabItem)
+						tabIDs = append(tabIDs, tab.ID)
+					}
+				}
+				vs.selected = make(map[int]bool)
+			} else {
+				ri := vs.realIndex(vs.cursor)
+				if ri < len(vs.items) {
+					tab := vs.items[ri].(TabItem)
+					tabIDs = append(tabIDs, tab.ID)
+				}
+			}
+			if len(tabIDs) == 0 {
+				a.errorMsg = "No tabs to group"
+				return a, nil
+			}
+			return a, a.doRequest("groups.create", map[string]any{
+				"tabIds": tabIDs,
+				"title":  name,
+			}, func(_ json.RawMessage) {
+				a.toast = fmt.Sprintf("Created group %q with %d tab(s)", name, len(tabIDs))
 			})
 		}
 		if a.view == ViewTabs && a.namePrompt == "Move to window: " {
