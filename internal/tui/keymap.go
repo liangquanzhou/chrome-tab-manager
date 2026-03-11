@@ -60,14 +60,17 @@ func bindingsForView(v ViewType) []KeyBinding {
 		}
 	case ViewSessions:
 		return []KeyBinding{
-			{"Enter", "preview"},
+			{"Enter", "expand/collapse"},
 			{"o", "restore"},
 			{"n", "save new"},
 			{"x x", "delete"},
+			{"y·", "yank/copy"},
+			{"zM", "fold all"},
+			{"zR", "unfold all"},
 		}
 	case ViewCollections:
 		return []KeyBinding{
-			{"Enter", "expand"},
+			{"Enter", "expand/collapse"},
 			{"o", "restore"},
 			{"n", "create new"},
 			{"e", "rename"},
@@ -75,6 +78,8 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"x x", "delete collection"},
 			{"J/K", "move item"},
 			{"y·", "yank/copy"},
+			{"zM", "fold all"},
+			{"zR", "unfold all"},
 		}
 	case ViewTargets:
 		return []KeyBinding{
@@ -114,6 +119,7 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"Enter", "open in browser"},
 			{"/", "search"},
 			{"D D", "delete from history"},
+			{"y·", "yank/copy"},
 		}
 	case ViewSearch:
 		return []KeyBinding{
@@ -121,6 +127,7 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"Enter", "open result"},
 			{"n", "save search"},
 			{"D D", "delete saved"},
+			{"y·", "yank/copy"},
 		}
 	case ViewDownloads:
 		return []KeyBinding{

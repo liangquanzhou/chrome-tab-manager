@@ -524,7 +524,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.confirmHint = "h:host p:pinned g:grouped a:active c:clear"
 			return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 		}
-		if a.view == ViewBookmarks {
+		if a.view == ViewBookmarks || a.view == ViewCollections || a.view == ViewSessions {
 			a.mode = ModeZFilter
 			a.confirmHint = "M:fold all  R:unfold all"
 			return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
@@ -1075,7 +1075,6 @@ func (a *App) handleZFilterKey(key string) (tea.Model, tea.Cmd) {
 	if a.view == ViewBookmarks {
 		switch key {
 		case "M":
-			// Fold all folders
 			for _, item := range a.bookmarkTree {
 				a.foldAllBookmarks(item)
 			}
@@ -1083,11 +1082,38 @@ func (a *App) handleZFilterKey(key string) (tea.Model, tea.Cmd) {
 			a.toast = "All folders folded"
 			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
 		case "R":
-			// Unfold all folders
 			a.collapsedFolders = make(map[string]bool)
 			a.reflattenBookmarks()
 			a.toast = "All folders unfolded"
 			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+		}
+		return a, nil
+	}
+
+	// Collections fold/unfold: zM / zR
+	if a.view == ViewCollections {
+		switch key {
+		case "M":
+			a.expandedCollections = make(map[string][]NestedTabItem)
+			a.rebuildCollectionItems()
+			a.toast = "All collections folded"
+			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+		case "R":
+			return a, a.expandAllCollections()
+		}
+		return a, nil
+	}
+
+	// Sessions fold/unfold: zM / zR
+	if a.view == ViewSessions {
+		switch key {
+		case "M":
+			a.expandedSessions = make(map[string][]NestedTabItem)
+			a.rebuildSessionItems()
+			a.toast = "All sessions folded"
+			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+		case "R":
+			return a, a.expandAllSessions()
 		}
 		return a, nil
 	}
@@ -1508,11 +1534,8 @@ func (a *App) applyRefresh(payload json.RawMessage) {
 		}
 	case ViewHistory:
 		history := parsePayload[HistoryItem](payload, "history")
-		vs.items = make([]any, len(history))
-		for i, h := range history {
-			vs.items[i] = h
-		}
-		vs.itemCount = len(history)
+		vs.items = groupHistoryByDate(history)
+		vs.itemCount = len(vs.items)
 	case ViewSearch:
 		if a.searchActive {
 			results := parsePayload[SearchResultItem](payload, "results")
@@ -2139,6 +2162,66 @@ func (a *App) rebuildCollectionItems() {
 	vs.clampCursor()
 }
 
+// expandAllCollections fetches details for all collections concurrently, then rebuilds.
+func (a *App) expandAllCollections() tea.Cmd {
+	vs := a.views[ViewCollections]
+	var names []string
+	for _, item := range vs.items {
+		if c, ok := item.(CollectionItem); ok {
+			if _, already := a.expandedCollections[c.Name]; !already {
+				names = append(names, c.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		a.toast = "All collections expanded"
+		return nil
+	}
+	return func() tea.Msg {
+		for _, name := range names {
+			resp, err := a.client.Request(a.ctx, "collections.get", map[string]string{"name": name}, nil)
+			if err != nil {
+				continue
+			}
+			tabs := a.parseCollectionTabs(resp.Payload, name)
+			a.expandedCollections[name] = tabs
+		}
+		a.rebuildCollectionItems()
+		a.toast = "All collections expanded"
+		return refreshMsg{}
+	}
+}
+
+// expandAllSessions fetches details for all sessions concurrently, then rebuilds.
+func (a *App) expandAllSessions() tea.Cmd {
+	vs := a.views[ViewSessions]
+	var names []string
+	for _, item := range vs.items {
+		if s, ok := item.(SessionItem); ok {
+			if _, already := a.expandedSessions[s.Name]; !already {
+				names = append(names, s.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		a.toast = "All sessions expanded"
+		return nil
+	}
+	return func() tea.Msg {
+		for _, name := range names {
+			resp, err := a.client.Request(a.ctx, "sessions.get", map[string]string{"name": name}, nil)
+			if err != nil {
+				continue
+			}
+			tabs := a.parseSessionTabs(resp.Payload, name)
+			a.expandedSessions[name] = tabs
+		}
+		a.rebuildSessionItems()
+		a.toast = "All sessions expanded"
+		return refreshMsg{}
+	}
+}
+
 // openSingleTab opens a single tab URL in the browser and focuses the window.
 func (a *App) openSingleTab(tab NestedTabItem) tea.Cmd {
 	return a.doRequest("tabs.open", map[string]any{"url": tab.URL, "focus": true}, func(_ json.RawMessage) {
@@ -2385,6 +2468,24 @@ func (a *App) moveCursor(delta int) {
 	oldCursor := vs.cursor
 	vs.cursor += delta
 	vs.clampCursor()
+	// Skip DateSeparator rows (non-interactive headers)
+	for tries := 0; tries < 3; tries++ {
+		idx := vs.realIndex(vs.cursor)
+		if idx < len(vs.items) {
+			if _, isSep := vs.items[idx].(DateSeparator); isSep {
+				if delta >= 0 && vs.cursor < vs.visibleCount()-1 {
+					vs.cursor++
+				} else if delta < 0 && vs.cursor > 0 {
+					vs.cursor--
+				} else {
+					break
+				}
+				continue
+			}
+		}
+		break
+	}
+	vs.clampCursor()
 	// Track cursor change for preview refresh
 	if a.view == ViewTabs && vs.cursor != oldCursor {
 		a.pendingPreviewFetch = true
@@ -2519,6 +2620,8 @@ func matchesFilter(item any, query string) bool {
 	case DownloadItem:
 		return strings.Contains(strings.ToLower(v.Filename), query) ||
 			strings.Contains(strings.ToLower(v.URL), query)
+	case DateSeparator:
+		return true // always show group headers
 	}
 	return false
 }
@@ -2528,8 +2631,12 @@ func matchesFilter(item any, query string) bool {
 func (a *App) renderHeader() string {
 	views := []ViewType{ViewTargets, ViewTabs, ViewGroups, ViewSessions, ViewCollections, ViewBookmarks, ViewWorkspaces, ViewSync, ViewHistory, ViewSearch, ViewDownloads}
 	var tabs []string
-	for _, v := range views {
-		label := v.String()
+	for i, v := range views {
+		num := fmt.Sprintf("%d:", i+1)
+		if i+1 > 9 {
+			num = " "
+		}
+		label := num + v.String()
 		if v == a.view {
 			tabs = append(tabs, styleActiveTab.Render(label))
 		} else {
@@ -2560,6 +2667,34 @@ func (a *App) renderHeader() string {
 	return line1 + "\n" + line2
 }
 
+func (a *App) emptyStateText() string {
+	switch a.view {
+	case ViewTabs:
+		return "(no tabs — is Chrome connected?)"
+	case ViewSessions:
+		return "(no sessions — press n to save current)"
+	case ViewCollections:
+		return "(no collections — press n to create)"
+	case ViewBookmarks:
+		return "(no bookmarks — press r to mirror from Chrome)"
+	case ViewWorkspaces:
+		return "(no workspaces — press n to create)"
+	case ViewHistory:
+		return "(no history)"
+	case ViewSearch:
+		if a.searchActive {
+			return "(no results)"
+		}
+		return "(no saved searches — press / to search)"
+	case ViewDownloads:
+		return "(no downloads)"
+	case ViewTargets:
+		return "(no browser connected)"
+	default:
+		return "(empty)"
+	}
+}
+
 func (a *App) renderContent(maxLines int) string {
 	// Split view for Tabs only
 	if a.view == ViewTabs {
@@ -2568,7 +2703,7 @@ func (a *App) renderContent(maxLines int) string {
 
 	vs := a.currentView()
 	if vs.visibleCount() == 0 {
-		return styleDim.Render("  (empty)")
+		return styleDim.Render("  " + a.emptyStateText())
 	}
 
 	var lines []string
@@ -2609,7 +2744,7 @@ func (a *App) renderContent(maxLines int) string {
 func (a *App) renderSplitContent(maxLines int) string {
 	vs := a.currentView()
 	if vs.visibleCount() == 0 {
-		return styleDim.Render("  (empty)")
+		return styleDim.Render("  " + a.emptyStateText())
 	}
 
 	// Panel widths: left ~1/3, separator 3 chars (" │ "), right ~2/3
@@ -3081,9 +3216,13 @@ func (a *App) renderItem(item any) string {
 		}
 		return stylePurple.Render(name) + "  " + stats + "  " + ts
 
+	case DateSeparator:
+		label := stylePurple.Render("── " + v.Label + " ──")
+		return label
+
 	case HistoryItem:
-		titleW := w * 50 / 100
-		domainW := w * 25 / 100
+		titleW := w * 45 / 100
+		domainW := w * 20 / 100
 		title := rwTruncate(v.Title, titleW, "...")
 		domain := extractDomain(v.URL)
 		domain = rwTruncate(domain, domainW, "...")
@@ -3091,9 +3230,10 @@ func (a *App) renderItem(item any) string {
 		if titlePad < 0 {
 			titlePad = 0
 		}
+		rt := styleDim.Render(relativeTime(v.LastVisitTime))
 		visits := styleDim.Render(fmt.Sprintf("(%d)", v.VisitCount))
 		return styleTitle.Render(title) + strings.Repeat(" ", titlePad) + "  " +
-			styleURLDomain.Render(domain) + "  " + visits
+			styleURLDomain.Render(domain) + "  " + rt + " " + visits
 
 	case SyncStatusItem:
 		var statusText string
@@ -3198,17 +3338,24 @@ func (a *App) renderStatusBar() string {
 		center = styleToast.Render(a.toast)
 	}
 
-	// Right: key hints summary
+	// Right: key hints summary (adaptive to terminal width)
 	right := ""
 	bindings := bindingsForView(a.view)
 	if len(bindings) > 0 {
+		available := a.width - lipgloss.Width(left) - 4
+		if center != "" {
+			available -= lipgloss.Width(center) + 4
+		}
 		var hints []string
-		maxHints := 4
-		for i, b := range bindings {
-			if i >= maxHints {
+		usedW := 0
+		for _, b := range bindings {
+			h := styleDim.Render(b.Key) + styleFlags.Render(":"+b.Desc)
+			hw := lipgloss.Width(h) + 1
+			if usedW+hw > available {
 				break
 			}
-			hints = append(hints, styleDim.Render(b.Key)+styleFlags.Render(":"+b.Desc))
+			hints = append(hints, h)
+			usedW += hw
 		}
 		right = strings.Join(hints, " ")
 	}
@@ -3289,6 +3436,57 @@ func rwTruncate(s string, maxWidth int, tail string) string {
 
 // extractDomain extracts just the domain from a URL (no path, no scheme).
 // e.g. "https://github.com/user/repo" -> "github.com"
+// groupHistoryByDate inserts DateSeparator headers between history items grouped by date.
+func groupHistoryByDate(items []HistoryItem) []any {
+	if len(items) == 0 {
+		return nil
+	}
+	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+	weekStart := todayStart.AddDate(0, 0, -int(now.Weekday()))
+
+	var result []any
+	lastGroup := ""
+	for _, h := range items {
+		// Chrome uses milliseconds since epoch
+		t := time.UnixMilli(int64(h.LastVisitTime))
+		var group string
+		switch {
+		case !t.Before(todayStart):
+			group = "Today"
+		case !t.Before(yesterdayStart):
+			group = "Yesterday"
+		case !t.Before(weekStart):
+			group = "This Week"
+		default:
+			group = t.Format("2006-01-02")
+		}
+		if group != lastGroup {
+			result = append(result, DateSeparator{Label: group})
+			lastGroup = group
+		}
+		result = append(result, h)
+	}
+	return result
+}
+
+// relativeTime formats a Chrome timestamp (ms since epoch) as a relative time string.
+func relativeTime(chromeMs float64) string {
+	t := time.UnixMilli(int64(chromeMs))
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return t.Format("01-02 15:04")
+	}
+}
+
 func extractDomain(rawURL string) string {
 	if rawURL == "" {
 		return ""

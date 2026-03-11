@@ -346,6 +346,16 @@ func (h *Hub) handleTargetsLabel(incoming *incomingMessage) {
 		return
 	}
 
+	// Validate label: max 256 chars, no control characters
+	if len([]rune(payload.Label)) > 256 {
+		sendError(incoming.writer, incoming.msg.ID, protocol.ErrInvalidPayload, "label too long (max 256)")
+		return
+	}
+	if strings.ContainsAny(payload.Label, "\x00\n\r") {
+		sendError(incoming.writer, incoming.msg.ID, protocol.ErrInvalidPayload, "label contains invalid characters")
+		return
+	}
+
 	tc, ok := h.targets[payload.TargetID]
 	if !ok {
 		sendError(incoming.writer, incoming.msg.ID, protocol.ErrTargetOffline, "target not found")

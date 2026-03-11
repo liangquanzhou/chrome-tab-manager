@@ -146,6 +146,11 @@ type SavedSearchItem struct {
 	CreatedAt string
 }
 
+// DateSeparator is a non-interactive header row for grouping items by date.
+type DateSeparator struct {
+	Label string // e.g. "Today", "Yesterday", "This Week", "2025-03-08"
+}
+
 // DownloadItem represents a browser download.
 type DownloadItem struct {
 	ID         int    `json:"id"`

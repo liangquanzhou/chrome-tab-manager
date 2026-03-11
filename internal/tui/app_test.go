@@ -1655,8 +1655,8 @@ func TestViewRendersEmptyState(t *testing.T) {
 	a.height = 24
 
 	output := a.View()
-	if !strings.Contains(output, "(empty)") {
-		t.Error("View() with no items should contain '(empty)'")
+	if !strings.Contains(output, "(no tabs") {
+		t.Error("View() with no items should contain empty state hint")
 	}
 }
 
@@ -2139,13 +2139,13 @@ func TestUpdateZFilterFlow(t *testing.T) {
 
 func TestUpdateZFilterNotAvailableOutsideTabs(t *testing.T) {
 	a := newTestApp()
-	a.view = ViewSessions // z-filter only works in Tabs view
+	a.view = ViewTargets // z-filter doesn't work in Targets view
 
 	model, _ := a.Update(keyRune('z'))
 	a = model.(*App)
 
 	if a.mode == ModeZFilter {
-		t.Errorf("z-filter should not activate outside ViewTabs")
+		t.Errorf("z-filter should not activate in ViewTargets")
 	}
 }
 

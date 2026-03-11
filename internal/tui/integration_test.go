@@ -1776,8 +1776,8 @@ func TestIntegrationView(t *testing.T) {
 	if !strings.Contains(output, "CTM") {
 		t.Error("view should contain CTM header")
 	}
-	if !strings.Contains(output, "(empty)") {
-		t.Error("view should show (empty) when no items")
+	if !strings.Contains(output, "(no tabs") {
+		t.Error("view should show empty state hint when no items")
 	}
 
 	// Populate some data and render
@@ -3776,8 +3776,10 @@ func TestIntegrationApplyRefresh_History(t *testing.T) {
 
 	env.app.view = ViewHistory
 	env.app.applyRefresh(payload)
-	if env.app.views[ViewHistory].itemCount != 2 {
-		t.Errorf("history itemCount = %d, want 2", env.app.views[ViewHistory].itemCount)
+	// 2 history items + at least 1 date separator (both items share same date group)
+	ic := env.app.views[ViewHistory].itemCount
+	if ic < 3 {
+		t.Errorf("history itemCount = %d, want >= 3 (items + date separators)", ic)
 	}
 }
 

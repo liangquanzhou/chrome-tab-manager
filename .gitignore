@@ -10,3 +10,9 @@ cover.out
 .idea/
 .vscode/
 *.swp
+
+# Claude Code
+.claude/
+
+# Review docs (internal)
+doc/review_doc/

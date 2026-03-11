@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -375,7 +376,9 @@ func (h *Hub) handleCollectionsRename(incoming *incomingMessage) {
 			fmt.Sprintf("rename failed: %s", err))
 		return
 	}
-	os.Remove(oldPath)
+	if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("[daemon %s] warning: failed to remove old collection %s: %v", timeStr(), payload.Name, err)
+	}
 
 	h.removeFromIndex("collection", payload.Name)
 	h.indexCollection(&c)

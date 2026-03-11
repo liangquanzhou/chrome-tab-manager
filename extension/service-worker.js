@@ -1295,7 +1295,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
  * The user clicks a collection name; the content script sends a message
  * back to the service worker to complete the add.
  *
- * @param {string[]} collections - Collection names to show
+ * @param {{name:string, itemCount:number}[]} collections - Collections to show
  */
 function showCollectionPicker(collections) {
   // Remove existing picker if any
@@ -1325,18 +1325,24 @@ function showCollectionPicker(collections) {
   let focusIdx = 0;
   const items = [];
 
-  collections.forEach((name, i) => {
+  collections.forEach((col, i) => {
     const row = document.createElement("div");
-    row.textContent = name;
     row.style.cssText =
       "padding:9px 10px;cursor:pointer;border-radius:6px;" +
-      "margin:2px 0;font-size:14px;color:#222;";
+      "margin:2px 0;font-size:14px;color:#222;display:flex;justify-content:space-between;align-items:center;";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = col.name;
+    const countSpan = document.createElement("span");
+    countSpan.textContent = String(col.itemCount);
+    countSpan.style.cssText = "color:#888;font-size:12px;margin-left:12px;";
+    row.appendChild(nameSpan);
+    row.appendChild(countSpan);
     row.addEventListener("mouseenter", () => {
       focusIdx = i;
       highlightItem();
     });
     row.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "ctm-pick-collection", name });
+      chrome.runtime.sendMessage({ type: "ctm-pick-collection", name: col.name });
       overlay.remove();
     });
     items.push(row);
@@ -1364,8 +1370,7 @@ function showCollectionPicker(collections) {
       highlightItem();
       e.preventDefault();
     } else if (e.key === "Enter") {
-      const name = collections[focusIdx];
-      chrome.runtime.sendMessage({ type: "ctm-pick-collection", name });
+      chrome.runtime.sendMessage({ type: "ctm-pick-collection", name: collections[focusIdx].name });
       overlay.remove();
       document.removeEventListener("keydown", onKey, true);
       e.preventDefault();
@@ -1392,9 +1397,12 @@ chrome.commands.onCommand.addListener(async (command) => {
 
   try {
     const result = await sendDaemonRequest("collections.list", {});
-    const names = (result.collections || []).map((c) => c.name);
+    const cols = (result.collections || []).map((c) => ({
+      name: c.name,
+      itemCount: c.itemCount || 0,
+    }));
 
-    if (names.length === 0) {
+    if (cols.length === 0) {
       warn("Shortcut: no collections available");
       return;
     }
@@ -1402,7 +1410,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: showCollectionPicker,
-      args: [names],
+      args: [cols],
     });
   } catch (err) {
     warn("Shortcut: failed to show picker:", err.message);

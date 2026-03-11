@@ -45,6 +45,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.listener = listener
 
+	// Verify socket is not a symlink (defense against symlink attack)
+	if fi, err := os.Lstat(s.sockPath); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			listener.Close()
+			s.lockFile.Close()
+			return fmt.Errorf("socket path is a symlink, refusing to start")
+		}
+	}
+
 	// Set socket permissions
 	if err := os.Chmod(s.sockPath, 0600); err != nil {
 		log.Printf("[daemon %s] warning: chmod socket: %v", timeStr(), err)

@@ -210,22 +210,30 @@ All resource commands accept `--target=<id>` to select a specific browser instan
 
 ### Sessions View
 
-| Key     | Action     |
-|---------|------------|
-| `o`     | Restore    |
-| `n`     | Save new   |
-| `x x`   | Delete     |
+| Key     | Action           |
+|---------|------------------|
+| `Enter` | Expand / collapse |
+| `o`     | Restore          |
+| `n`     | Save new         |
+| `x x`   | Delete          |
+| `y·`   | Yank / copy       |
+| `zM`   | Fold all          |
+| `zR`   | Unfold all        |
 
 ### Collections View
 
 | Key     | Action            |
 |---------|-------------------|
+| `Enter` | Expand / collapse |
 | `o`     | Restore           |
 | `n`     | Create new        |
 | `e`     | Rename            |
 | `x`     | Remove item       |
 | `x x`   | Delete collection |
 | `J`/`K` | Move item         |
+| `y·`   | Yank / copy        |
+| `zM`   | Fold all           |
+| `zR`   | Unfold all         |
 
 ### Bookmarks View
 
@@ -247,6 +255,25 @@ All resource commands accept `--target=<id>` to select a specific browser instan
 | `n`   | Create new |
 | `e`   | Edit name  |
 | `D D` | Delete     |
+
+### History View
+
+| Key       | Action              |
+|-----------|---------------------|
+| `Enter`   | Open in browser     |
+| `/`       | Search              |
+| `D D`     | Delete from history |
+| `y·`     | Yank / copy          |
+
+### Search View
+
+| Key       | Action        |
+|-----------|---------------|
+| `/`       | Search        |
+| `Enter`   | Open result   |
+| `n`       | Save search   |
+| `D D`     | Delete saved  |
+| `y·`     | Yank / copy    |
 
 ## Development
 
