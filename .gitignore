@@ -14,5 +14,5 @@ cover.out
 # Claude Code
 .claude/
 
-# Review docs (internal)
-doc/review_doc/
+# Internal docs
+doc/
