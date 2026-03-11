@@ -66,15 +66,23 @@ internal/
 - **Google Chrome** 或 Chrome Beta
 - **CTM Chrome Extension**（作为未打包扩展加载）
 
-## 快速开始
+## 安装
 
-### 1. 构建和安装
+### Homebrew（推荐）
 
 ```bash
-git clone <repo-url> && cd chrome-tab-manager
+brew install liangquanzhou/tap/ctm
+```
+
+### 从源码构建
+
+```bash
+git clone https://github.com/liangquanzhou/chrome-tab-manager.git && cd chrome-tab-manager
 make build            # 生成 ./ctm 二进制文件
 make install          # 安装 LaunchAgent 用于守护进程自动启动
 ```
+
+## 快速开始
 
 ### 2. 连接 Chrome Extension
 

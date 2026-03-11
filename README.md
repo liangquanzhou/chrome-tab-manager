@@ -71,15 +71,23 @@ internal/
 - **Google Chrome** or Chrome Beta
 - **CTM Chrome Extension** (loaded as unpacked extension)
 
-## Quick Start
+## Install
 
-### 1. Build and install
+### Homebrew (recommended)
 
 ```bash
-git clone <repo-url> && cd chrome-tab-manager
+brew install liangquanzhou/tap/ctm
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/liangquanzhou/chrome-tab-manager.git && cd chrome-tab-manager
 make build            # produces ./ctm binary
 make install          # installs LaunchAgent for daemon auto-start
 ```
+
+## Quick Start
 
 ### 2. Connect the Chrome Extension
 
@@ -317,7 +325,6 @@ goreleaser release             # tag-based release
 |---------------|---------------------------------------------------|
 | `cmd/`        | CLI commands (Cobra)                              |
 | `internal/`   | All Go packages (config, protocol, client, daemon, tui, ...) |
-| `doc/`        | Design documents and specifications               |
 | `Makefile`    | Build, test, and release targets                  |
 
 ## License
