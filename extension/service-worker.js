@@ -722,43 +722,37 @@ async function handleTabsCapture(payload) {
   const fmt = payload.format || "png";
   const options = { format: fmt };
   if (payload.quality !== undefined) options.quality = payload.quality;
-  const windowId = payload.windowId || chrome.windows.WINDOW_ID_CURRENT;
 
-  // Ensure the target tab is active and its window is focused (required for MV3 captureVisibleTab)
+  // Prefer debugger CDP approach — does NOT steal window focus
+  if (payload.tabId) {
+    try {
+      await chrome.debugger.attach({ tabId: payload.tabId }, "1.3");
+      const result = await chrome.debugger.sendCommand(
+        { tabId: payload.tabId },
+        "Page.captureScreenshot",
+        { format: fmt === "jpeg" ? "jpeg" : "png", quality: payload.quality }
+      );
+      await chrome.debugger.detach({ tabId: payload.tabId });
+      return { dataUrl: `data:image/${fmt};base64,${result.data}` };
+    } catch (dbgErr) {
+      try { await chrome.debugger.detach({ tabId: payload.tabId }); } catch (_) {}
+      // Fall through to captureVisibleTab
+    }
+  }
+
+  // Fallback: captureVisibleTab (requires tab to be active + window focused)
+  const windowId = payload.windowId || chrome.windows.WINDOW_ID_CURRENT;
   if (payload.tabId) {
     try {
       await chrome.tabs.update(payload.tabId, { active: true });
       if (windowId !== chrome.windows.WINDOW_ID_CURRENT) {
         await chrome.windows.update(windowId, { focused: true });
       }
-      // Brief delay for page to render after activation
       await new Promise(r => setTimeout(r, 150));
     } catch (_) {}
   }
-
-  // Try captureVisibleTab first (works when extension has active host permissions)
-  try {
-    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, options);
-    return { dataUrl };
-  } catch (e) {
-    // Fallback: use chrome.debugger CDP Page.captureScreenshot
-    if (payload.tabId) {
-      try {
-        await chrome.debugger.attach({ tabId: payload.tabId }, "1.3");
-        const result = await chrome.debugger.sendCommand(
-          { tabId: payload.tabId },
-          "Page.captureScreenshot",
-          { format: fmt === "jpeg" ? "jpeg" : "png", quality: payload.quality }
-        );
-        await chrome.debugger.detach({ tabId: payload.tabId });
-        return { dataUrl: `data:image/${fmt};base64,${result.data}` };
-      } catch (dbgErr) {
-        try { await chrome.debugger.detach({ tabId: payload.tabId }); } catch (_) {}
-        throw new Error(`captureVisibleTab: ${e.message}; debugger fallback: ${dbgErr.message}`);
-      }
-    }
-    throw e;
-  }
+  const dataUrl = await chrome.tabs.captureVisibleTab(windowId, options);
+  return { dataUrl };
 }
 
 // ---------------------------------------------------------------------------
@@ -865,7 +859,7 @@ async function handleHistorySearch(payload) {
   if (!payload.query && payload.query !== "") throw new Error("history.search: query is required");
   const searchParams = {
     text: payload.query,
-    maxResults: payload.maxResults || 100,
+    maxResults: payload.maxResults ?? 2000,
   };
   if (payload.startTime) searchParams.startTime = payload.startTime;
   if (payload.endTime) searchParams.endTime = payload.endTime;
@@ -1214,7 +1208,16 @@ const MENU_PARENT_ID = "ctm-add-to-collection";
 /**
  * Fetch collections from daemon and rebuild the context menu.
  */
+let _menuRefreshPending = null;
 async function refreshCollectionsMenu() {
+  // Serialize concurrent calls to avoid duplicate menu IDs
+  while (_menuRefreshPending) await _menuRefreshPending;
+  let resolve;
+  _menuRefreshPending = new Promise((r) => { resolve = r; });
+  try { return await _refreshCollectionsMenuInner(); }
+  finally { _menuRefreshPending = null; resolve(); }
+}
+async function _refreshCollectionsMenuInner() {
   try {
     await chrome.contextMenus.removeAll();
   } catch (_) {}
@@ -1352,11 +1355,11 @@ function showCollectionPicker(collections) {
       overlay.remove();
       document.removeEventListener("keydown", onKey, true);
       e.stopPropagation();
-    } else if (e.key === "ArrowDown" || e.key === "j") {
+    } else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
       focusIdx = (focusIdx + 1) % items.length;
       highlightItem();
       e.preventDefault();
-    } else if (e.key === "ArrowUp" || e.key === "k") {
+    } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
       focusIdx = (focusIdx - 1 + items.length) % items.length;
       highlightItem();
       e.preventDefault();

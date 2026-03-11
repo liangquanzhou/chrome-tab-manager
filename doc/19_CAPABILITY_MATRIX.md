@@ -32,11 +32,12 @@ Generated from code audit on 2026-03-08. Support levels added on 2026-03-08. Las
 | tabs.pin | V(fwd) | V | V | V(p) | - | S |
 | tabs.move | V(fwd) | V | V | V(M) | - | S |
 | tabs.getText | V(fwd) | V | V | V(v) | - | S |
-| tabs.capture | V(fwd) | V | V | V(v) | - | S |
+| tabs.capture | V(fwd) | V | V | V(s) | - | S |
 
 Notes:
 - `tabs.update` 在 extension 中只处理 `pinned`，CLI/TUI 使用更具体的 `tabs.pin` 代替 -> R
-- TUI tab preview `v` 循环三种模式：info / text(getText) / screenshot(capture)
+- TUI tab preview `v` 循环两种模式：info（含 excerpt）/ text（全文）；均通过 getText 获取
+- TUI `s` 键截图并用外部查看器打开（debugger CDP 优先，captureVisibleTab fallback）
 - TUI `P` 键启动 w3m/lynx 预览
 - TUI `M` 键移动 tab 到指定 window
 - TUI `A` 键将选中 tab(s) 添加到 collection
@@ -80,8 +81,10 @@ Notes:
 | collections.create | V | - | V | V(n) | V | S |
 | collections.addItems | V | V** | V | V(A) | V | S |
 | collections.removeItems | V | - | V | V(x) | V | S |
+| collections.rename | V | - | - | V(e) | V | S |
+| collections.reorder | V | - | - | V(J/K) | V | S |
 | collections.restore | V | V* | V | V(o) | V | S |
-| collections.delete | V | - | V | V(DD) | V | S |
+| collections.delete | V | - | V | V(x) | V | S |
 
 Notes:
 - * collections.restore 通过 extension tabs.open 执行
@@ -235,7 +238,7 @@ Notes:
 
 ## Support Level Summary
 
-### S (Supported) -- 52 actions
+### S (Supported) -- 54 actions
 完整用户路径，可作为产品承诺:
 - **Tabs**: list, open, close, activate, mute, pin, move, getText, capture (9)
 - **Groups**: list, create, update, delete (4)

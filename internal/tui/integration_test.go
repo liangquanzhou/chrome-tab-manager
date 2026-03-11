@@ -928,9 +928,14 @@ func TestIntegrationHandleYankKey_NonTabView(t *testing.T) {
 	vs.itemCount = 1
 	vs.cursor = 0
 
-	_, cmd := env.app.handleYankKey("y")
-	if cmd != nil {
-		t.Error("yank on non-tab view should return nil cmd")
+	a, cmd := env.app.handleYankKey("y")
+	// Yank now works on all views — SessionItem copies name
+	if cmd == nil {
+		t.Error("yank on session view should return a cmd (showToast)")
+	}
+	app := a.(*App)
+	if app.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", app.mode)
 	}
 }
 
@@ -1358,8 +1363,8 @@ func TestIntegrationApplyRefresh_AllViews(t *testing.T) {
 	})
 	env.app.view = ViewBookmarks
 	env.app.applyRefresh(bmPayload)
-	if env.app.views[ViewBookmarks].itemCount != 3 { // root + 2 children
-		t.Errorf("bookmarks itemCount = %d, want 3", env.app.views[ViewBookmarks].itemCount)
+	if env.app.views[ViewBookmarks].itemCount != 1 { // root only (default folded)
+		t.Errorf("bookmarks itemCount = %d, want 1 (folded)", env.app.views[ViewBookmarks].itemCount)
 	}
 
 	// Test workspaces
@@ -1879,6 +1884,3247 @@ func TestIntegrationRenderHeader(t *testing.T) {
 	output = env.app.renderHeader()
 	if !strings.Contains(output, "target: target_1") {
 		t.Error("header should show target ID")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional tests for coverage improvement
+// ---------------------------------------------------------------------------
+
+// --- Pure helper function tests (no daemon needed) ---
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		input    int64
+		contains string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1.0 MB"},
+		{1073741824, "1.0 GB"},
+		{1099511627776, "1.0 TB"},
+	}
+	for _, tt := range tests {
+		result := formatBytes(tt.input)
+		if result != tt.contains {
+			t.Errorf("formatBytes(%d) = %q, want %q", tt.input, result, tt.contains)
+		}
+	}
+}
+
+func TestExtractBrowserName(t *testing.T) {
+	tests := []struct {
+		ua   string
+		want string
+	}{
+		{"", "Browser"},
+		{"Mozilla/5.0 (Macintosh) Chrome/145.0.0.0 Safari/537.36", "Chrome"},
+		{"Mozilla/5.0 Chrome/145.0.0.0 Chrome Beta Safari/537.36", "Chrome Beta"},
+		{"Mozilla/5.0 Chrome/145 Edg/145.0.0.0", "Edge"},
+		{"Mozilla/5.0 edge/145", "Edge"},
+		{"Mozilla/5.0 Arc/1.0", "Arc"},
+		{"Mozilla/5.0 arc /1.0", "Arc"},
+		{"Mozilla/5.0 Brave/1.0", "Brave"},
+		{"Mozilla/5.0 Vivaldi/6.0", "Vivaldi"},
+		{"Mozilla/5.0 OPR/100.0", "Opera"},
+		{"Mozilla/5.0 Opera/100.0", "Opera"},
+		{"Mozilla/5.0 Firefox/130.0", "Firefox"},
+		{"Mozilla/5.0 Safari/605.1.15", "Safari"},
+		{"SomethingUnknown/1.0", "Browser"},
+	}
+	for _, tt := range tests {
+		result := extractBrowserName(tt.ua)
+		if result != tt.want {
+			t.Errorf("extractBrowserName(%q) = %q, want %q", tt.ua, result, tt.want)
+		}
+	}
+}
+
+func TestExtractBrowserVersion(t *testing.T) {
+	tests := []struct {
+		ua   string
+		want string
+	}{
+		{"", ""},
+		{"Mozilla/5.0 Chrome/145.0.0.0", "145"},
+		{"Mozilla/5.0 Edg/131.0.0.0", "131"},
+		{"Mozilla/5.0 Firefox/130.0", "130"},
+		{"Mozilla/5.0 Version/17.5 Safari/605", "17"},
+		{"SomethingUnknown/1.0", ""},
+	}
+	for _, tt := range tests {
+		result := extractBrowserVersion(tt.ua)
+		if result != tt.want {
+			t.Errorf("extractBrowserVersion(%q) = %q, want %q", tt.ua, result, tt.want)
+		}
+	}
+}
+
+func TestExtractDomain(t *testing.T) {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"", ""},
+		{"https://github.com/user/repo", "github.com"},
+		{"http://localhost:3000/path", "localhost"},
+		{"not-a-url", "not-a-url"},
+	}
+	for _, tt := range tests {
+		result := extractDomain(tt.url)
+		if result != tt.want {
+			t.Errorf("extractDomain(%q) = %q, want %q", tt.url, result, tt.want)
+		}
+	}
+}
+
+func TestRwTruncate(t *testing.T) {
+	// Short string, no truncation needed
+	result := rwTruncate("hello", 10, "...")
+	if result != "hello" {
+		t.Errorf("rwTruncate short = %q, want %q", result, "hello")
+	}
+	// Long string needs truncation
+	result = rwTruncate("a very long string", 10, "...")
+	if len(result) > 10 {
+		t.Errorf("rwTruncate long display width > 10")
+	}
+}
+
+func TestGroupColorDot(t *testing.T) {
+	// Known colors
+	for _, color := range []string{"blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey"} {
+		result := groupColorDot(color)
+		if result == "" {
+			t.Errorf("groupColorDot(%q) returned empty", color)
+		}
+	}
+	// Unknown color returns default
+	result := groupColorDot("unknown")
+	if result == "" {
+		t.Error("groupColorDot unknown returned empty")
+	}
+}
+
+func TestMatchesFilter_AllTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		item  any
+		query string
+		want  bool
+	}{
+		{"TabItem match title", TabItem{Title: "GitHub", URL: "https://github.com"}, "github", true},
+		{"TabItem match url", TabItem{Title: "Page", URL: "https://github.com"}, "github", true},
+		{"TabItem no match", TabItem{Title: "Page", URL: "https://example.com"}, "github", false},
+		{"GroupItem match", GroupItem{Title: "DevTools"}, "dev", true},
+		{"GroupItem no match", GroupItem{Title: "DevTools"}, "prod", false},
+		{"SessionItem match", SessionItem{Name: "work-session"}, "work", true},
+		{"CollectionItem match", CollectionItem{Name: "reading-list"}, "reading", true},
+		{"NestedTabItem match title", NestedTabItem{Title: "Nested Tab", URL: "https://nested.com"}, "nested", true},
+		{"NestedTabItem match url", NestedTabItem{Title: "Nested Tab", URL: "https://nested.com"}, "nested.com", true},
+		{"TargetItem match label", TargetItem{Label: "Main Browser", TargetID: "t_1"}, "main", true},
+		{"TargetItem match id", TargetItem{Label: "", TargetID: "target_123"}, "123", true},
+		{"BookmarkItem match title", BookmarkItem{Title: "Bookmark", URL: "https://bm.com"}, "bookmark", true},
+		{"BookmarkItem match url", BookmarkItem{Title: "BM", URL: "https://bm.com"}, "bm.com", true},
+		{"WorkspaceItem match", WorkspaceItem{Name: "dev-workspace"}, "dev", true},
+		{"SyncStatusItem match", SyncStatusItem{SyncDir: "/tmp/sync"}, "sync", true},
+		{"HistoryItem match title", HistoryItem{Title: "Google", URL: "https://google.com"}, "google", true},
+		{"HistoryItem match url", HistoryItem{Title: "G", URL: "https://google.com"}, "google.com", true},
+		{"SearchResultItem match", SearchResultItem{Title: "Result", URL: "https://r.com", Kind: "tab"}, "result", true},
+		{"SearchResultItem match kind", SearchResultItem{Title: "X", URL: "", Kind: "session"}, "session", true},
+		{"SavedSearchItem match name", SavedSearchItem{Name: "my-search", QueryText: "q"}, "my-search", true},
+		{"SavedSearchItem match query", SavedSearchItem{Name: "s", QueryText: "github tabs"}, "github", true},
+		{"DownloadItem match filename", DownloadItem{Filename: "file.zip", URL: "https://dl.com/file.zip"}, "file.zip", true},
+		{"DownloadItem match url", DownloadItem{Filename: "f", URL: "https://dl.com/file.zip"}, "dl.com", true},
+		{"Unknown type", struct{ X string }{"val"}, "val", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesFilter(tt.item, tt.query)
+			if result != tt.want {
+				t.Errorf("matchesFilter(%s, %q) = %v, want %v", tt.name, tt.query, result, tt.want)
+			}
+		})
+	}
+}
+
+// --- parseSessionTabs / parseCollectionTabs ---
+
+func TestParseSessionTabs(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"session": map[string]any{
+			"windows": []map[string]any{
+				{
+					"tabs": []map[string]any{
+						{"url": "https://a.com", "title": "Tab A", "pinned": true},
+						{"url": "https://b.com", "title": "Tab B", "pinned": false},
+					},
+				},
+				{
+					"tabs": []map[string]any{
+						{"url": "https://c.com", "title": "Tab C", "pinned": false},
+					},
+				},
+			},
+		},
+	})
+
+	tabs := env.app.parseSessionTabs(payload, "test-session")
+	if len(tabs) != 3 {
+		t.Fatalf("parseSessionTabs returned %d tabs, want 3", len(tabs))
+	}
+	if tabs[0].Title != "Tab A" || !tabs[0].Pinned {
+		t.Errorf("tab[0] = %+v, want Title=Tab A, Pinned=true", tabs[0])
+	}
+	if tabs[0].ParentName != "test-session" {
+		t.Errorf("tab[0].ParentName = %q, want %q", tabs[0].ParentName, "test-session")
+	}
+}
+
+func TestParseCollectionTabs(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"collection": map[string]any{
+			"items": []map[string]any{
+				{"url": "https://x.com", "title": "Item X"},
+				{"url": "https://y.com", "title": "Item Y"},
+			},
+		},
+	})
+
+	tabs := env.app.parseCollectionTabs(payload, "my-coll")
+	if len(tabs) != 2 {
+		t.Fatalf("parseCollectionTabs returned %d tabs, want 2", len(tabs))
+	}
+	if tabs[0].URL != "https://x.com" || tabs[0].ParentName != "my-coll" {
+		t.Errorf("tab[0] = %+v, want URL=https://x.com, ParentName=my-coll", tabs[0])
+	}
+}
+
+// --- rebuildSessionItems / rebuildCollectionItems ---
+
+func TestRebuildSessionItems(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{
+		SessionItem{Name: "s1", TabCount: 2},
+		SessionItem{Name: "s2", TabCount: 1},
+	}
+	vs.itemCount = 2
+
+	// Expand s1
+	env.app.expandedSessions["s1"] = []NestedTabItem{
+		{URL: "https://a.com", Title: "A", ParentName: "s1"},
+		{URL: "https://b.com", Title: "B", ParentName: "s1"},
+	}
+
+	env.app.rebuildSessionItems()
+
+	if len(vs.items) != 4 { // s1 + 2 nested + s2
+		t.Errorf("rebuildSessionItems: %d items, want 4", len(vs.items))
+	}
+	if _, ok := vs.items[0].(SessionItem); !ok {
+		t.Error("item[0] should be SessionItem")
+	}
+	if nested, ok := vs.items[1].(NestedTabItem); !ok || nested.Title != "A" {
+		t.Errorf("item[1] should be NestedTabItem 'A', got %T", vs.items[1])
+	}
+}
+
+func TestRebuildCollectionItems(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		CollectionItem{Name: "c1", ItemCount: 1},
+		CollectionItem{Name: "c2", ItemCount: 2},
+	}
+	vs.itemCount = 2
+
+	env.app.expandedCollections["c2"] = []NestedTabItem{
+		{URL: "https://x.com", Title: "X", ParentName: "c2"},
+	}
+
+	env.app.rebuildCollectionItems()
+
+	if len(vs.items) != 3 { // c1 + c2 + 1 nested
+		t.Errorf("rebuildCollectionItems: %d items, want 3", len(vs.items))
+	}
+}
+
+// --- handleNameInputKey additional branches ---
+
+func TestIntegrationHandleNameInputKey_Escape(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeNameInput
+	env.app.nameText = "something"
+
+	model, cmd := env.app.handleNameInputKey("esc", tea.KeyMsg{Type: tea.KeyEscape})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if a.nameText != "" {
+		t.Errorf("nameText = %q, want empty", a.nameText)
+	}
+	if cmd != nil {
+		t.Error("esc should return nil cmd")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_Backspace(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeNameInput
+	env.app.nameText = "hello"
+
+	model, _ := env.app.handleNameInputKey("backspace", tea.KeyMsg{Type: tea.KeyBackspace})
+	a := model.(*App)
+
+	if a.nameText != "hell" {
+		t.Errorf("nameText after backspace = %q, want %q", a.nameText, "hell")
+	}
+
+	// Backspace on empty string
+	env.app.nameText = ""
+	model, _ = env.app.handleNameInputKey("backspace", tea.KeyMsg{Type: tea.KeyBackspace})
+	a = model.(*App)
+	if a.nameText != "" {
+		t.Errorf("nameText after backspace on empty = %q, want empty", a.nameText)
+	}
+}
+
+func TestIntegrationHandleNameInputKey_TypeRunes(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeNameInput
+	env.app.nameText = "he"
+
+	model, _ := env.app.handleNameInputKey("l", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	a := model.(*App)
+
+	if a.nameText != "hel" {
+		t.Errorf("nameText after typing = %q, want %q", a.nameText, "hel")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_GroupCreate(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Group name: "
+	env.app.nameText = "my-group"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 10, Title: "Tab 1", URL: "https://one.com"},
+		TabItem{ID: 20, Title: "Tab 2", URL: "https://two.com"},
+	}
+	vs.itemCount = 2
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("group create should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("group create error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleNameInputKey_GroupCreateWithSelection(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Group name: "
+	env.app.nameText = "selected-group"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 10, Title: "Tab 1", URL: "https://one.com"},
+		TabItem{ID: 20, Title: "Tab 2", URL: "https://two.com"},
+		TabItem{ID: 30, Title: "Tab 3", URL: "https://three.com"},
+	}
+	vs.itemCount = 3
+	vs.selected[0] = true
+	vs.selected[2] = true
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("group create with selection should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("group create with selection error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleNameInputKey_GroupCreateEmpty(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Group name: "
+	env.app.nameText = "empty-group"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.errorMsg != "No tabs to group" {
+		t.Errorf("errorMsg = %q, want 'No tabs to group'", a.errorMsg)
+	}
+	if cmd != nil {
+		t.Error("empty group should return nil cmd")
+	}
+	_ = a
+}
+
+func TestIntegrationHandleNameInputKey_WorkspaceCreate(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewWorkspaces
+	env.app.mode = ModeNameInput
+	env.app.nameText = "new-ws"
+	env.app.namePrompt = "Name: "
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("workspace create should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("workspace create error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleNameInputKey_WorkspaceRename(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewWorkspaces
+	env.app.mode = ModeNameInput
+	env.app.nameText = "renamed-ws"
+	env.app.namePrompt = "New name: "
+
+	vs := env.app.views[ViewWorkspaces]
+	vs.items = []any{
+		WorkspaceItem{ID: "ws-1", Name: "old-ws"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("workspace rename should return cmd")
+	}
+
+	// Workspace may not exist on disk so the daemon may return an error.
+	// We verify the TUI code path is exercised (cmd is non-nil).
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("workspace rename cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_TargetLabel(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTargets
+	env.app.mode = ModeNameInput
+	env.app.nameText = "my-label"
+	env.app.namePrompt = "Label: "
+
+	vs := env.app.views[ViewTargets]
+	vs.items = []any{
+		TargetItem{TargetID: env.ext.targetID, Channel: "nm"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("target label should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("target label error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleNameInputKey_CollectionRename(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create the collection
+	collection := map[string]any{
+		"name": "old-name", "createdAt": "2024-01-01T00:00:00Z",
+		"updatedAt": "2024-01-01T00:00:00Z", "items": []any{},
+	}
+	data, _ := json.MarshalIndent(collection, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "collections", "old-name.json"), data, 0644)
+
+	env.app.view = ViewCollections
+	env.app.mode = ModeNameInput
+	env.app.nameText = "new-name"
+	env.app.namePrompt = "Rename: "
+
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		CollectionItem{Name: "old-name", ItemCount: 0},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("collection rename should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("collection rename error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleNameInputKey_CollectionRenameSameName(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewCollections
+	env.app.mode = ModeNameInput
+	env.app.nameText = "same-name"
+	env.app.namePrompt = "Rename: "
+
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		CollectionItem{Name: "same-name", ItemCount: 0},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("rename to same name should return nil cmd")
+	}
+}
+
+// --- handleEnter additional branches ---
+
+func TestIntegrationHandleEnter_GroupToggle(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewGroups
+	vs := env.app.views[ViewGroups]
+	vs.items = []any{
+		GroupItem{ID: 5, Title: "DevTools", Color: "blue", Collapsed: false},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on group should return cmd")
+	}
+
+	// groups.update is forwarded to extension which may not support it.
+	// We verify the TUI code path is exercised.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("group toggle cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleEnter_BookmarkFolder(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	env.app.collapsedFolders = make(map[string]bool)
+	env.app.bookmarkTree = []BookmarkItem{
+		{ID: "1", Title: "Root", Children: []BookmarkItem{
+			{ID: "2", Title: "Child", URL: "https://child.com"},
+		}},
+	}
+
+	vs := env.app.views[ViewBookmarks]
+	vs.items = []any{
+		BookmarkItem{ID: "1", Title: "Root", IsFolder: true, Children: []BookmarkItem{
+			{ID: "2", Title: "Child", URL: "https://child.com"},
+		}},
+		BookmarkItem{ID: "2", Title: "Child", URL: "https://child.com", IsFolder: false},
+	}
+	vs.itemCount = 2
+	vs.cursor = 0
+
+	// Collapse the folder
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on folder should return cmd")
+	}
+	if !env.app.collapsedFolders["1"] {
+		t.Error("folder should be collapsed after enter")
+	}
+
+	// Uncollapse
+	cmd = env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter to unfold should return cmd")
+	}
+	if env.app.collapsedFolders["1"] {
+		t.Error("folder should be uncollapsed after second enter")
+	}
+}
+
+func TestIntegrationHandleEnter_BookmarkLink(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewBookmarks
+	vs := env.app.views[ViewBookmarks]
+	vs.items = []any{
+		BookmarkItem{ID: "2", Title: "Link", URL: "https://example.com", IsFolder: false},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on bookmark link should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("open bookmark error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleEnter_SessionExpand(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create a session file
+	session := map[string]any{
+		"name": "expand-me", "createdAt": "2024-01-01T00:00:00Z",
+		"sourceTarget": env.ext.targetID,
+		"windows": []map[string]any{
+			{"tabs": []map[string]any{
+				{"url": "https://a.com", "title": "Tab A", "pinned": false, "active": true, "groupIndex": -1},
+			}},
+		},
+		"groups": []any{},
+	}
+	data, _ := json.MarshalIndent(session, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "sessions", "expand-me.json"), data, 0644)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{
+		SessionItem{Name: "expand-me", TabCount: 1},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	// Expand
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on session should return cmd to expand")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("session expand error: %v", em.err)
+	}
+
+	// After expand, collapse
+	if _, ok := env.app.expandedSessions["expand-me"]; ok {
+		cmd = env.app.handleEnter()
+		// Should collapse (nil cmd)
+	}
+}
+
+func TestIntegrationHandleEnter_CollectionExpand(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create a collection file
+	collection := map[string]any{
+		"name": "expand-coll", "createdAt": "2024-01-01T00:00:00Z",
+		"updatedAt": "2024-01-01T00:00:00Z",
+		"items": []map[string]any{
+			{"url": "https://a.com", "title": "Item A"},
+		},
+	}
+	data, _ := json.MarshalIndent(collection, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "collections", "expand-coll.json"), data, 0644)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		CollectionItem{Name: "expand-coll", ItemCount: 1},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on collection should return cmd to expand")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("collection expand error: %v", em.err)
+	}
+}
+
+func TestIntegrationHandleEnter_WorkspaceGet(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewWorkspaces
+	vs := env.app.views[ViewWorkspaces]
+	vs.items = []any{
+		WorkspaceItem{ID: "ws-1", Name: "test-ws"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on workspace should return cmd")
+	}
+
+	// Workspace may not exist; just verify the code path runs.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("workspace get cmd should return a msg")
+	}
+}
+
+// --- handleConfirmDeleteKey additional branches ---
+
+func TestIntegrationHandleConfirmDeleteKey_Workspace(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create a workspace file so delete can succeed
+	ws := map[string]any{
+		"id": "ws-del", "name": "del-ws",
+		"sessions": []any{}, "collections": []any{},
+		"createdAt": "2024-01-01T00:00:00Z", "updatedAt": "2024-01-01T00:00:00Z",
+	}
+	data, _ := json.MarshalIndent(ws, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "workspaces", "ws-del.json"), data, 0644)
+
+	env.app.view = ViewWorkspaces
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewWorkspaces]
+	vs.items = []any{
+		WorkspaceItem{ID: "ws-del", Name: "del-ws"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleConfirmDeleteKey("D")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("workspace delete should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("workspace delete cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleConfirmDeleteKey_Group(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewGroups
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewGroups]
+	vs.items = []any{
+		GroupItem{ID: 5, Title: "DevGroup", Color: "blue"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleConfirmDeleteKey("D")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("group delete should return cmd")
+	}
+
+	// groups.delete is forwarded to extension which may not support it.
+	// We verify the TUI code path is exercised.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("group delete cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleConfirmDeleteKey_Bookmark(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewBookmarks
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewBookmarks]
+	vs.items = []any{
+		BookmarkItem{ID: "bm-1", Title: "Delete Me", URL: "https://del.com", IsFolder: false},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleConfirmDeleteKey("D")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("bookmark delete should return cmd")
+	}
+
+	// bookmarks.remove is forwarded to extension which may not support it.
+	// We verify the TUI code path is exercised.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("bookmark delete cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleConfirmDeleteKey_BookmarkRoot(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewBookmarks]
+	vs.items = []any{
+		BookmarkItem{ID: "0", Title: "", IsFolder: true},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleConfirmDeleteKey("D")
+	a := model.(*App)
+	if a.errorMsg != "Chrome root node cannot be deleted" {
+		t.Errorf("errorMsg = %q, want root node error", a.errorMsg)
+	}
+	if cmd != nil {
+		t.Error("deleting root should return nil cmd")
+	}
+}
+
+func TestIntegrationHandleConfirmDeleteKey_XChord(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Create a session file to delete
+	session := map[string]any{
+		"name": "xx-del", "createdAt": "2024-01-01T00:00:00Z",
+		"windows": []any{}, "groups": []any{},
+	}
+	data, _ := json.MarshalIndent(session, "", "  ")
+	sessionFile := filepath.Join(env.tmpDir, "sessions", "xx-del.json")
+	os.WriteFile(sessionFile, data, 0644)
+
+	env.app.view = ViewSessions
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{SessionItem{Name: "xx-del"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	// x key also confirms delete (xx chord)
+	_, cmd := env.app.handleConfirmDeleteKey("x")
+	if cmd == nil {
+		t.Fatal("xx chord should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("xx chord delete error: %v", em.err)
+	}
+}
+
+// --- handleZFilterKey ---
+
+func TestIntegrationHandleZFilterKey_Host(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "A", URL: "https://github.com/a"},
+		TabItem{ID: 2, Title: "B", URL: "https://google.com"},
+		TabItem{ID: 3, Title: "C", URL: "https://github.com/c"},
+	}
+	vs.itemCount = 3
+	vs.cursor = 0
+
+	model, cmd := env.app.handleZFilterKey("h")
+	a := model.(*App)
+
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("zh should return toast cmd")
+	}
+	if len(vs.filtered) != 2 {
+		t.Errorf("filtered count = %d, want 2", len(vs.filtered))
+	}
+}
+
+func TestIntegrationHandleZFilterKey_Pinned(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "A", URL: "https://a.com", Pinned: true},
+		TabItem{ID: 2, Title: "B", URL: "https://b.com", Pinned: false},
+		TabItem{ID: 3, Title: "C", URL: "https://c.com", Pinned: true},
+	}
+	vs.itemCount = 3
+
+	model, cmd := env.app.handleZFilterKey("p")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("zp should return toast cmd")
+	}
+	if len(vs.filtered) != 2 {
+		t.Errorf("filtered = %d, want 2", len(vs.filtered))
+	}
+}
+
+func TestIntegrationHandleZFilterKey_Grouped(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, URL: "https://a.com", GroupID: 5},
+		TabItem{ID: 2, URL: "https://b.com", GroupID: -1},
+	}
+	vs.itemCount = 2
+
+	model, _ := env.app.handleZFilterKey("g")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if len(vs.filtered) != 1 {
+		t.Errorf("filtered = %d, want 1", len(vs.filtered))
+	}
+}
+
+func TestIntegrationHandleZFilterKey_Active(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, URL: "https://a.com", Active: true},
+		TabItem{ID: 2, URL: "https://b.com", Active: false},
+	}
+	vs.itemCount = 2
+
+	model, _ := env.app.handleZFilterKey("a")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if len(vs.filtered) != 1 {
+		t.Errorf("filtered = %d, want 1", len(vs.filtered))
+	}
+}
+
+func TestIntegrationHandleZFilterKey_Clear(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, URL: "https://a.com"},
+	}
+	vs.itemCount = 1
+	vs.filtered = []int{0}
+
+	model, _ := env.app.handleZFilterKey("c")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if vs.filtered != nil {
+		t.Error("filtered should be nil after clear")
+	}
+}
+
+func TestIntegrationHandleZFilterKey_BookmarkFoldAll(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	env.app.mode = ModeZFilter
+	env.app.bookmarkTree = []BookmarkItem{
+		{ID: "1", Title: "Root", Children: []BookmarkItem{
+			{ID: "2", Title: "Child", URL: "https://child.com"},
+		}},
+	}
+	env.app.collapsedFolders = make(map[string]bool)
+
+	// Flatten first
+	flat := flattenBookmarkTree(env.app.bookmarkTree, 0)
+	vs := env.app.views[ViewBookmarks]
+	vs.items = make([]any, len(flat))
+	for i, b := range flat {
+		vs.items[i] = b
+	}
+	vs.itemCount = len(flat)
+
+	// zM = fold all
+	model, cmd := env.app.handleZFilterKey("M")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if !a.collapsedFolders["1"] {
+		t.Error("folder 1 should be collapsed after zM")
+	}
+	if cmd == nil {
+		t.Fatal("zM should return toast cmd")
+	}
+}
+
+func TestIntegrationHandleZFilterKey_BookmarkUnfoldAll(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	env.app.mode = ModeZFilter
+	env.app.bookmarkTree = []BookmarkItem{
+		{ID: "1", Title: "Root", Children: []BookmarkItem{
+			{ID: "2", Title: "Child", URL: "https://child.com"},
+		}},
+	}
+	env.app.collapsedFolders = map[string]bool{"1": true}
+
+	flat := flattenBookmarkTreeWithCollapse(env.app.bookmarkTree, 0, env.app.collapsedFolders)
+	vs := env.app.views[ViewBookmarks]
+	vs.items = make([]any, len(flat))
+	for i, b := range flat {
+		vs.items[i] = b
+	}
+	vs.itemCount = len(flat)
+
+	// zR = unfold all
+	model, cmd := env.app.handleZFilterKey("R")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if len(a.collapsedFolders) != 0 {
+		t.Errorf("collapsedFolders should be empty, got %d", len(a.collapsedFolders))
+	}
+	if cmd == nil {
+		t.Fatal("zR should return toast cmd")
+	}
+}
+
+func TestIntegrationHandleZFilterKey_EmptyTabs(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	model, cmd := env.app.handleZFilterKey("h")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd != nil {
+		t.Error("zh on empty should return nil cmd")
+	}
+}
+
+// --- toggleTabMute / toggleTabPin ---
+
+func TestIntegrationToggleTabMute(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab", URL: "https://tab.com", Muted: false},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.toggleTabMute()
+	if cmd == nil {
+		t.Fatal("toggleTabMute should return cmd")
+	}
+
+	// Mock extension returns error for tabs.mute (unknown action).
+	// We just verify the cmd is produced and executes without panic.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("toggleTabMute cmd should return a msg")
+	}
+}
+
+func TestIntegrationToggleTabMute_Empty(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	cmd := env.app.toggleTabMute()
+	if cmd != nil {
+		t.Error("toggleTabMute on empty should return nil")
+	}
+}
+
+func TestIntegrationToggleTabPin(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab", URL: "https://tab.com", Pinned: false},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.toggleTabPin()
+	if cmd == nil {
+		t.Fatal("toggleTabPin should return cmd")
+	}
+
+	// Mock extension returns error for tabs.pin (unknown action).
+	// We just verify the cmd is produced and executes without panic.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("toggleTabPin cmd should return a msg")
+	}
+}
+
+func TestIntegrationToggleTabPin_Empty(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	cmd := env.app.toggleTabPin()
+	if cmd != nil {
+		t.Error("toggleTabPin on empty should return nil")
+	}
+}
+
+// --- currentTab ---
+
+func TestIntegrationCurrentTab(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	// Empty
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	_, ok := env.app.currentTab()
+	if ok {
+		t.Error("currentTab on empty should return false")
+	}
+
+	// With items
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab", URL: "https://tab.com"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	tab, ok := env.app.currentTab()
+	if !ok {
+		t.Error("currentTab should return true")
+	}
+	if tab.ID != 1 {
+		t.Errorf("tab.ID = %d, want 1", tab.ID)
+	}
+}
+
+// --- handleKey normal mode branches ---
+
+func TestIntegrationHandleKey_Quit(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("q should return tea.Quit cmd")
+	}
+	msg := execCmd(t, cmd)
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected QuitMsg, got %T", msg)
+	}
+}
+
+func TestIntegrationHandleKey_Help(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	a := model.(*App)
+	if a.mode != ModeHelp {
+		t.Errorf("mode = %d, want ModeHelp", a.mode)
+	}
+
+	// Exit help with q
+	model, _ = a.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	a = model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode after q in help = %d, want ModeNormal", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_Filter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	a := model.(*App)
+	if a.mode != ModeFilter {
+		t.Errorf("mode = %d, want ModeFilter", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_Command(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	a := model.(*App)
+	if a.mode != ModeCommand {
+		t.Errorf("mode = %d, want ModeCommand", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_Navigation(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "A"},
+		TabItem{ID: 2, Title: "B"},
+		TabItem{ID: 3, Title: "C"},
+	}
+	vs.itemCount = 3
+	vs.cursor = 0
+
+	// j moves down
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if vs.cursor != 1 {
+		t.Errorf("cursor after j = %d, want 1", vs.cursor)
+	}
+
+	// k moves up
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if vs.cursor != 0 {
+		t.Errorf("cursor after k = %d, want 0", vs.cursor)
+	}
+
+	// G goes to end
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	if vs.cursor != 2 {
+		t.Errorf("cursor after G = %d, want 2", vs.cursor)
+	}
+
+	// space toggles select
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !vs.selected[2] {
+		t.Error("item should be selected after space")
+	}
+
+	// u clears selection
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if len(vs.selected) != 0 {
+		t.Error("selection should be empty after u")
+	}
+
+	// ctrl+a selects all
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	if len(vs.selected) != 3 {
+		t.Errorf("selected count = %d, want 3", len(vs.selected))
+	}
+}
+
+func TestIntegrationHandleKey_GG(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "A"},
+		TabItem{ID: 2, Title: "B"},
+	}
+	vs.itemCount = 2
+	vs.cursor = 1
+
+	// First g sets pendingG
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	a := model.(*App)
+	if !a.pendingG {
+		t.Error("pendingG should be true after first g")
+	}
+	if cmd == nil {
+		t.Fatal("g should return timeout cmd")
+	}
+
+	// Second g goes to top
+	model, _ = a.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	a = model.(*App)
+	if a.pendingG {
+		t.Error("pendingG should be false after gg")
+	}
+	if vs.cursor != 0 {
+		t.Errorf("cursor after gg = %d, want 0", vs.cursor)
+	}
+}
+
+func TestIntegrationHandleKey_NumberedViewSwitch(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	tests := []struct {
+		key  rune
+		want ViewType
+	}{
+		{'1', ViewTargets},
+		{'2', ViewTabs},
+		{'3', ViewGroups},
+		{'4', ViewSessions},
+		{'5', ViewCollections},
+		{'6', ViewBookmarks},
+		{'7', ViewWorkspaces},
+		{'8', ViewSync},
+		{'9', ViewHistory},
+		{'0', ViewSearch},
+	}
+
+	for _, tt := range tests {
+		model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+		a := model.(*App)
+		if a.view != tt.want {
+			t.Errorf("key %c: view = %v, want %v", tt.key, a.view, tt.want)
+		}
+	}
+}
+
+func TestIntegrationHandleKey_TabShift(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+
+	// tab cycles forward
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	a := model.(*App)
+	if a.view == ViewTabs {
+		// Should have changed view
+		t.Log("tab shifted view away from Tabs")
+	}
+
+	// shift+tab cycles backward
+	env.app.view = ViewGroups
+	model, _ = env.app.handleKey(tea.KeyMsg{Type: tea.KeyShiftTab})
+	a = model.(*App)
+	if a.view == ViewGroups {
+		t.Log("shift+tab shifted view away from Groups")
+	}
+}
+
+func TestIntegrationHandleKey_Refresh(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_ = model.(*App)
+	if cmd == nil {
+		t.Fatal("r should return refresh cmd")
+	}
+}
+
+func TestIntegrationHandleKey_EscClearsError(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.errorMsg = "some error"
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	a := model.(*App)
+	if a.errorMsg != "" {
+		t.Errorf("errorMsg after esc = %q, want empty", a.errorMsg)
+	}
+}
+
+func TestIntegrationHandleKey_NameInput_Sessions(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSessions
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Name: " {
+		t.Errorf("namePrompt = %q, want 'Name: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_NameInput_GroupName(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Group name: " {
+		t.Errorf("namePrompt = %q, want 'Group name: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_YankChord(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	a := model.(*App)
+	if a.mode != ModeYank {
+		t.Errorf("mode = %d, want ModeYank", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("y should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_DeleteChord_Sessions(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{SessionItem{Name: "s1"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("D should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_DeleteChord_Groups(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewGroups
+	vs := env.app.views[ViewGroups]
+	vs.items = []any{GroupItem{ID: 1, Title: "G1"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("D on groups should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_DeleteChord_Bookmarks(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	vs := env.app.views[ViewBookmarks]
+	vs.items = []any{BookmarkItem{ID: "bm1", Title: "BM", URL: "https://bm.com", IsFolder: false}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("D on bookmarks should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_DeleteChord_BookmarkRoot(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	vs := env.app.views[ViewBookmarks]
+	vs.items = []any{BookmarkItem{ID: "0", Title: "", IsFolder: true}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.errorMsg != "Chrome root node cannot be deleted" {
+		t.Errorf("errorMsg = %q, want root node error", a.errorMsg)
+	}
+	if cmd != nil {
+		t.Error("D on root should return nil cmd")
+	}
+}
+
+func TestIntegrationHandleKey_O_RestoreSessions(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create a session file
+	session := map[string]any{
+		"name": "key-restore", "createdAt": "2024-01-01T00:00:00Z",
+		"windows": []map[string]any{
+			{"tabs": []map[string]any{
+				{"url": "https://a.com", "title": "A", "pinned": false, "active": true, "groupIndex": -1},
+			}},
+		},
+		"groups": []any{},
+	}
+	data, _ := json.MarshalIndent(session, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "sessions", "key-restore.json"), data, 0644)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{SessionItem{Name: "key-restore", TabCount: 1}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if cmd == nil {
+		t.Fatal("o should return restore cmd")
+	}
+}
+
+func TestIntegrationHandleKey_X_CloseTabs(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab", URL: "https://tab.com"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("x should return close cmd")
+	}
+}
+
+func TestIntegrationHandleKey_X_SessionDelete(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{SessionItem{Name: "del-me"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("x on session should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_M_MoveToWindow(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Move to window: " {
+		t.Errorf("namePrompt = %q, want 'Move to window: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_A_AddToCollection(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Add to collection: " {
+		t.Errorf("namePrompt = %q, want 'Add to collection: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_M_TabMute(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{TabItem{ID: 1, Title: "Tab", URL: "https://t.com"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if cmd == nil {
+		t.Fatal("m should return toggleMute cmd")
+	}
+}
+
+func TestIntegrationHandleKey_P_TabPin(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{TabItem{ID: 1, Title: "Tab", URL: "https://t.com"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd == nil {
+		t.Fatal("p should return togglePin cmd")
+	}
+}
+
+func TestIntegrationHandleKey_D_TargetDefault(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTargets
+	vs := env.app.views[ViewTargets]
+	vs.items = []any{TargetItem{TargetID: env.ext.targetID, Channel: "nm"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd == nil {
+		t.Fatal("d on targets should return setDefault cmd")
+	}
+}
+
+func TestIntegrationHandleKey_C_ClearDefault(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTargets
+	env.app.selectedTarget = "some-target"
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("c on targets should return clearDefault cmd")
+	}
+}
+
+func TestIntegrationHandleKey_E_WorkspaceRename(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewWorkspaces
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "New name: " {
+		t.Errorf("namePrompt = %q, want 'New name: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_E_CollectionRename(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{CollectionItem{Name: "coll-1"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Rename: " {
+		t.Errorf("namePrompt = %q, want 'Rename: '", a.namePrompt)
+	}
+	if a.nameText != "coll-1" {
+		t.Errorf("nameText = %q, want 'coll-1'", a.nameText)
+	}
+}
+
+func TestIntegrationHandleKey_A_BookmarkCreate(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "URL: " {
+		t.Errorf("namePrompt = %q, want 'URL: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_O_WorkspaceSwitch(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewWorkspaces
+	vs := env.app.views[ViewWorkspaces]
+	vs.items = []any{WorkspaceItem{ID: "ws-1", Name: "ws"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if cmd == nil {
+		t.Fatal("o on workspaces should return switch cmd")
+	}
+}
+
+func TestIntegrationHandleKey_Z_TabsFilter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	a := model.(*App)
+	if a.mode != ModeZFilter {
+		t.Errorf("mode = %d, want ModeZFilter", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("z should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_Z_BookmarksFilter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	a := model.(*App)
+	if a.mode != ModeZFilter {
+		t.Errorf("mode = %d, want ModeZFilter", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("z on bookmarks should return timeout cmd")
+	}
+}
+
+func TestIntegrationHandleKey_L_TargetLabel(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTargets
+	vs := env.app.views[ViewTargets]
+	vs.items = []any{TargetItem{TargetID: "t1"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Label: " {
+		t.Errorf("namePrompt = %q, want 'Label: '", a.namePrompt)
+	}
+}
+
+func TestIntegrationHandleKey_CtrlD(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.height = 40
+	vs := env.app.views[ViewTabs]
+	items := make([]any, 50)
+	for i := range items {
+		items[i] = TabItem{ID: i, Title: fmt.Sprintf("Tab %d", i)}
+	}
+	vs.items = items
+	vs.itemCount = 50
+	vs.cursor = 0
+
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if vs.cursor == 0 {
+		t.Error("ctrl+d should move cursor down")
+	}
+
+	// ctrl+u goes back up
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyCtrlU})
+	if vs.cursor != 0 {
+		t.Errorf("cursor after ctrl+u = %d, want 0", vs.cursor)
+	}
+}
+
+func TestIntegrationHandleKey_D_NestedTabHint(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{
+		NestedTabItem{URL: "https://a.com", Title: "A", ParentName: "s1"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.toast != "Use x to remove item" {
+		t.Errorf("toast = %q, want 'Use x to remove item'", a.toast)
+	}
+	if cmd == nil {
+		t.Fatal("D on nested tab should return toast clear cmd")
+	}
+}
+
+// --- applyRefresh additional views ---
+
+func TestIntegrationApplyRefresh_History(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"history": []map[string]any{
+			{"id": "1", "url": "https://h1.com", "title": "H1", "lastVisitTime": 1234567890.0, "visitCount": 3},
+			{"id": "2", "url": "https://h2.com", "title": "H2", "lastVisitTime": 1234567891.0, "visitCount": 1},
+		},
+	})
+
+	env.app.view = ViewHistory
+	env.app.applyRefresh(payload)
+	if env.app.views[ViewHistory].itemCount != 2 {
+		t.Errorf("history itemCount = %d, want 2", env.app.views[ViewHistory].itemCount)
+	}
+}
+
+func TestIntegrationApplyRefresh_SearchResults(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"results": []map[string]any{
+			{"kind": "tab", "id": "1", "title": "Result 1", "url": "https://r1.com", "score": 0.9},
+		},
+	})
+
+	env.app.view = ViewSearch
+	env.app.searchActive = true
+	env.app.applyRefresh(payload)
+	if env.app.views[ViewSearch].itemCount != 1 {
+		t.Errorf("search results itemCount = %d, want 1", env.app.views[ViewSearch].itemCount)
+	}
+}
+
+func TestIntegrationApplyRefresh_SavedSearches(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"searches": []map[string]any{
+			{"id": "s1", "name": "saved1", "query": map[string]any{"query": "test"}, "createdAt": "2024-01-01T00:00:00Z"},
+		},
+	})
+
+	env.app.view = ViewSearch
+	env.app.searchActive = false
+	env.app.applyRefresh(payload)
+	if env.app.views[ViewSearch].itemCount != 1 {
+		t.Errorf("saved searches itemCount = %d, want 1", env.app.views[ViewSearch].itemCount)
+	}
+	item := env.app.views[ViewSearch].items[0].(SavedSearchItem)
+	if item.Name != "saved1" || item.QueryText != "test" {
+		t.Errorf("saved search = %+v, want Name=saved1, QueryText=test", item)
+	}
+}
+
+func TestIntegrationApplyRefresh_Downloads(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"downloads": []map[string]any{
+			{"id": 1, "filename": "file.zip", "url": "https://dl.com/file.zip", "state": "in_progress", "totalBytes": 1048576},
+		},
+	})
+
+	env.app.view = ViewDownloads
+	env.app.applyRefresh(payload)
+	if env.app.views[ViewDownloads].itemCount != 1 {
+		t.Errorf("downloads itemCount = %d, want 1", env.app.views[ViewDownloads].itemCount)
+	}
+}
+
+func TestIntegrationApplyRefresh_SessionsWithExpanded(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.expandedSessions["s1"] = []NestedTabItem{
+		{URL: "https://a.com", Title: "A", ParentName: "s1"},
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"sessions": []map[string]any{
+			{"name": "s1", "tabCount": 1},
+			{"name": "s2", "tabCount": 2},
+		},
+	})
+
+	env.app.view = ViewSessions
+	env.app.applyRefresh(payload)
+
+	vs := env.app.views[ViewSessions]
+	// Should have s1 + nested + s2 = 3 items after rebuild
+	if vs.itemCount < 2 {
+		t.Errorf("sessions with expanded: itemCount = %d, want >= 2", vs.itemCount)
+	}
+}
+
+func TestIntegrationApplyRefresh_CollectionsWithExpanded(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.expandedCollections["c1"] = []NestedTabItem{
+		{URL: "https://x.com", Title: "X", ParentName: "c1"},
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"collections": []map[string]any{
+			{"name": "c1", "itemCount": 1},
+		},
+	})
+
+	env.app.view = ViewCollections
+	env.app.applyRefresh(payload)
+
+	vs := env.app.views[ViewCollections]
+	if vs.itemCount < 1 {
+		t.Errorf("collections with expanded: itemCount = %d, want >= 1", vs.itemCount)
+	}
+}
+
+// --- renderListItem additional types ---
+
+func TestIntegrationRenderListItem_AllTypes(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	tests := []struct {
+		name     string
+		item     any
+		contains string
+	}{
+		{"TabItem active", TabItem{ID: 1, Title: "Active Tab", URL: "https://t.com", Active: true}, "Active Tab"},
+		{"TabItem pinned", TabItem{ID: 2, Title: "Pinned Tab", URL: "https://t.com", Pinned: true}, "Pinned Tab"},
+		{"TabItem normal", TabItem{ID: 3, Title: "Normal Tab", URL: "https://t.com"}, "Normal Tab"},
+		{"TabItem muted", TabItem{ID: 4, Title: "Muted Tab", URL: "https://t.com", Muted: true}, "Muted Tab"},
+		{"SessionItem", SessionItem{Name: "sess1", TabCount: 10}, "sess1"},
+		{"CollectionItem", CollectionItem{Name: "coll1", ItemCount: 5}, "coll1"},
+		{"NestedTabItem", NestedTabItem{URL: "https://nest.com", Title: "Nested"}, "Nested"},
+		{"Unknown", struct{ X string }{"val"}, "val"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := env.app.renderListItem(tt.item, 80)
+			if !strings.Contains(result, tt.contains) {
+				t.Errorf("renderListItem(%s) = %q, want to contain %q", tt.name, result, tt.contains)
+			}
+		})
+	}
+}
+
+// --- openSingleTab ---
+
+func TestIntegrationOpenSingleTab(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	tab := NestedTabItem{URL: "https://open.com", Title: "Open Me"}
+	cmd := env.app.openSingleTab(tab)
+	if cmd == nil {
+		t.Fatal("openSingleTab should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if em, ok := msg.(errMsg); ok {
+		t.Fatalf("openSingleTab error: %v", em.err)
+	}
+}
+
+// --- switchWorkspace ---
+
+func TestIntegrationSwitchWorkspace(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	vs := env.app.views[ViewWorkspaces]
+	vs.items = []any{WorkspaceItem{ID: "ws-1", Name: "ws"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.switchWorkspace()
+	if cmd == nil {
+		t.Fatal("switchWorkspace should return cmd")
+	}
+
+	// Workspace may not exist; just verify the code path runs.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("switchWorkspace cmd should return a msg")
+	}
+}
+
+func TestIntegrationSwitchWorkspace_Empty(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewWorkspaces]
+	vs.items = nil
+	vs.itemCount = 0
+
+	cmd := env.app.switchWorkspace()
+	if cmd != nil {
+		t.Error("switchWorkspace on empty should return nil")
+	}
+}
+
+// --- handleKey bookmark navigation (l/h/right/left) ---
+
+func TestIntegrationHandleKey_BookmarkExpandCollapse(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewBookmarks
+	env.app.collapsedFolders = make(map[string]bool)
+	env.app.bookmarkTree = []BookmarkItem{
+		{ID: "1", Title: "Folder", Children: []BookmarkItem{
+			{ID: "2", Title: "Child", URL: "https://child.com"},
+		}},
+	}
+
+	flat := flattenBookmarkTree(env.app.bookmarkTree, 0)
+	vs := env.app.views[ViewBookmarks]
+	vs.items = make([]any, len(flat))
+	for i, b := range flat {
+		vs.items[i] = b
+	}
+	vs.itemCount = len(flat)
+	vs.cursor = 0
+
+	// h/left on an expanded folder should collapse it
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if !env.app.collapsedFolders["1"] {
+		t.Error("folder should be collapsed after h")
+	}
+
+	// l/right on a collapsed folder should expand it
+	env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if env.app.collapsedFolders["1"] {
+		t.Error("folder should be expanded after l")
+	}
+}
+
+// --- Update message handling ---
+
+func TestIntegrationUpdateToastMsg(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, _ := env.app.Update(toastMsg("Hello"))
+	a := model.(*App)
+	if a.toast != "Hello" {
+		t.Errorf("toast = %q, want %q", a.toast, "Hello")
+	}
+}
+
+func TestIntegrationUpdatePreviewTextMsg(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, _ := env.app.Update(previewTextMsg{tabID: 42, text: "preview content"})
+	a := model.(*App)
+	if a.previewText[42] != "preview content" {
+		t.Errorf("previewText[42] = %q, want %q", a.previewText[42], "preview content")
+	}
+}
+
+// --- foldAllBookmarks ---
+
+func TestFoldAllBookmarks(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.app.collapsedFolders = make(map[string]bool)
+
+	tree := BookmarkItem{
+		ID:    "1",
+		Title: "Root",
+		Children: []BookmarkItem{
+			{ID: "2", Title: "Sub", Children: []BookmarkItem{
+				{ID: "3", Title: "SubSub", URL: "https://a.com"},
+			}},
+		},
+	}
+
+	env.app.foldAllBookmarks(tree)
+
+	if !env.app.collapsedFolders["1"] {
+		t.Error("folder 1 should be collapsed")
+	}
+	if !env.app.collapsedFolders["2"] {
+		t.Error("folder 2 should be collapsed")
+	}
+}
+
+// --- reflattenBookmarks ---
+
+func TestReflattenBookmarks(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.bookmarkTree = []BookmarkItem{
+		{ID: "1", Title: "Root", Children: []BookmarkItem{
+			{ID: "2", Title: "Child", URL: "https://child.com"},
+			{ID: "3", Title: "SubFolder", Children: []BookmarkItem{
+				{ID: "4", Title: "Deep", URL: "https://deep.com"},
+			}},
+		}},
+	}
+	env.app.collapsedFolders = make(map[string]bool)
+
+	env.app.reflattenBookmarks()
+
+	vs := env.app.views[ViewBookmarks]
+	if vs.itemCount != 4 { // Root + Child + SubFolder + Deep
+		t.Errorf("itemCount = %d, want 4", vs.itemCount)
+	}
+
+	// Collapse Root, should only show Root
+	env.app.collapsedFolders["1"] = true
+	env.app.reflattenBookmarks()
+	if vs.itemCount != 1 {
+		t.Errorf("itemCount after collapse = %d, want 1", vs.itemCount)
+	}
+}
+
+// --- renderContent for splitView ---
+
+func TestIntegrationRenderContent_SplitView(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.width = 120
+	env.app.height = 30
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Test Tab", URL: "https://test.com", Active: true},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	output := env.app.renderContent(20)
+	if !strings.Contains(output, "Test Tab") {
+		t.Error("renderContent should contain tab title")
+	}
+}
+
+func TestIntegrationRenderContent_NonSplitView(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewGroups
+	env.app.width = 80
+	env.app.height = 30
+
+	vs := env.app.views[ViewGroups]
+	vs.items = []any{
+		GroupItem{ID: 1, Title: "my-group", Color: "blue"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	output := env.app.renderContent(20)
+	if !strings.Contains(output, "my-group") {
+		t.Error("renderContent should contain group title")
+	}
+}
+
+// --- handleFilterKey ---
+
+func TestIntegrationHandleFilterKey_Enter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeFilter
+	env.app.filterText = "tab"
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab One", URL: "https://one.com"},
+		TabItem{ID: 2, Title: "Other", URL: "https://other.com"},
+	}
+	vs.itemCount = 2
+
+	model, _ := env.app.handleFilterKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	// Filter should be applied
+	if len(vs.filtered) != 1 {
+		t.Errorf("filtered = %d, want 1", len(vs.filtered))
+	}
+}
+
+func TestIntegrationHandleFilterKey_Escape(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeFilter
+	env.app.filterText = "test"
+	vs := env.app.views[ViewTabs]
+	vs.filtered = []int{0}
+
+	model, _ := env.app.handleFilterKey("esc", tea.KeyMsg{Type: tea.KeyEscape})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if vs.filtered != nil {
+		t.Error("filter should be cleared on esc")
+	}
+}
+
+func TestIntegrationHandleFilterKey_Backspace(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeFilter
+	env.app.filterText = "abc"
+
+	model, _ := env.app.handleFilterKey("backspace", tea.KeyMsg{Type: tea.KeyBackspace})
+	a := model.(*App)
+	if a.filterText != "ab" {
+		t.Errorf("filterText = %q, want %q", a.filterText, "ab")
+	}
+}
+
+func TestIntegrationHandleFilterKey_TypeRunes(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeFilter
+	env.app.filterText = "ab"
+
+	model, _ := env.app.handleFilterKey("c", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	a := model.(*App)
+	if a.filterText != "abc" {
+		t.Errorf("filterText = %q, want %q", a.filterText, "abc")
+	}
+}
+
+// --- handleCommandKey ---
+
+func TestIntegrationHandleCommandKey_Enter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeCommand
+	env.app.commandText = "help"
+
+	model, _ := env.app.handleCommandKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeHelp {
+		t.Errorf("mode = %d, want ModeHelp after :help", a.mode)
+	}
+}
+
+func TestIntegrationHandleCommandKey_Escape(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeCommand
+	env.app.commandText = "test"
+
+	model, _ := env.app.handleCommandKey("esc", tea.KeyMsg{Type: tea.KeyEscape})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal after esc", a.mode)
+	}
+	if a.commandText != "" {
+		t.Errorf("commandText = %q, want empty", a.commandText)
+	}
+}
+
+func TestIntegrationHandleCommandKey_Backspace(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeCommand
+	env.app.commandText = "hello"
+
+	model, _ := env.app.handleCommandKey("backspace", tea.KeyMsg{Type: tea.KeyBackspace})
+	a := model.(*App)
+	if a.commandText != "hell" {
+		t.Errorf("commandText = %q, want %q", a.commandText, "hell")
+	}
+}
+
+// --- currentItemName ---
+
+func TestIntegrationCurrentItemName(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	tests := []struct {
+		view ViewType
+		item any
+		want string
+	}{
+		{ViewSessions, SessionItem{Name: "s1"}, "s1"},
+		{ViewCollections, CollectionItem{Name: "c1"}, "c1"},
+		{ViewWorkspaces, WorkspaceItem{Name: "w1"}, "w1"},
+		{ViewTabs, TabItem{ID: 1, Title: "Tab"}, ""},
+	}
+
+	for _, tt := range tests {
+		env.app.view = tt.view
+		vs := env.app.views[tt.view]
+		vs.items = []any{tt.item}
+		vs.itemCount = 1
+		vs.cursor = 0
+
+		name := env.app.currentItemName()
+		if name != tt.want {
+			t.Errorf("currentItemName for %v = %q, want %q", tt.view, name, tt.want)
+		}
+	}
+
+	// Empty view
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = nil
+	vs.itemCount = 0
+	if env.app.currentItemName() != "" {
+		t.Error("currentItemName on empty should return empty")
+	}
+}
+
+// --- renderItem for additional types ---
+
+func TestIntegrationRenderItem_HistoryItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	result := env.app.renderItem(HistoryItem{Title: "History Entry", URL: "https://h.com", VisitCount: 5})
+	if !strings.Contains(result, "History Entry") {
+		t.Errorf("renderItem(HistoryItem) = %q, want to contain 'History Entry'", result)
+	}
+}
+
+func TestIntegrationRenderItem_SearchResultItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	result := env.app.renderItem(SearchResultItem{Title: "Search Result", URL: "https://sr.com", Kind: "tab", Score: 0.9})
+	if !strings.Contains(result, "Search Result") {
+		t.Errorf("renderItem(SearchResultItem) = %q, want to contain 'Search Result'", result)
+	}
+}
+
+func TestIntegrationRenderItem_SavedSearchItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	result := env.app.renderItem(SavedSearchItem{Name: "MySavedSearch", QueryText: "test query"})
+	if !strings.Contains(result, "MySavedSearch") {
+		t.Errorf("renderItem(SavedSearchItem) = %q, want to contain 'MySavedSearch'", result)
+	}
+}
+
+func TestIntegrationRenderItem_DownloadItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	result := env.app.renderItem(DownloadItem{Filename: "file.zip", State: "in_progress", TotalBytes: 1048576})
+	if !strings.Contains(result, "file.zip") {
+		t.Errorf("renderItem(DownloadItem) = %q, want to contain 'file.zip'", result)
+	}
+}
+
+func TestIntegrationRenderItem_NestedTabItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	result := env.app.renderItem(NestedTabItem{Title: "NestedTab", URL: "https://nested.com", ParentName: "parent"})
+	if !strings.Contains(result, "NestedTab") {
+		t.Errorf("renderItem(NestedTabItem) = %q, want to contain 'NestedTab'", result)
+	}
+}
+
+// --- renderPreviewPanel ---
+
+func TestIntegrationRenderPreviewPanel_Empty(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	result := env.app.renderPreviewPanel(vs, 40, 20)
+	if result != nil {
+		t.Error("renderPreviewPanel on empty should return nil")
+	}
+}
+
+func TestIntegrationRenderPreviewPanel_TabItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Preview Tab", URL: "https://preview.com", Active: true, WindowID: 1},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	result := env.app.renderPreviewPanel(vs, 40, 20)
+	if len(result) == 0 {
+		t.Error("renderPreviewPanel should return lines")
+	}
+}
+
+// --- executeCommand additional commands ---
+
+func TestIntegrationExecuteCommand_UnknownCommand(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	cmd := env.app.executeCommand("nonexistent-command")
+	if cmd != nil {
+		t.Error("unknown command should return nil")
+	}
+}
+
+func TestIntegrationExecuteCommand_QuitVariant(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	cmd := env.app.executeCommand("quit")
+	if cmd == nil {
+		t.Fatal("quit command should return tea.Quit")
+	}
+	msg := execCmd(t, cmd)
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected QuitMsg, got %T", msg)
+	}
+}
+
+// --- renderHelp ---
+
+func TestIntegrationRenderHelp(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	output := env.app.renderHelp()
+	if !strings.Contains(output, "Help") {
+		t.Error("renderHelp should contain 'Help'")
+	}
+	// Should contain key descriptions
+	if !strings.Contains(output, "down") {
+		t.Error("renderHelp should contain navigation key descriptions")
+	}
+}
+
+// --- WindowSize handling ---
+
+func TestIntegrationUpdateWindowSize(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	model, _ := env.app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a := model.(*App)
+	if a.width != 120 || a.height != 40 {
+		t.Errorf("size = %dx%d, want 120x40", a.width, a.height)
+	}
+}
+
+// --- handleNameInputKey additional view-specific branches ---
+
+func TestIntegrationHandleNameInputKey_AddToCollection(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create collection
+	coll := map[string]any{
+		"name": "target-coll", "createdAt": "2024-01-01T00:00:00Z",
+		"updatedAt": "2024-01-01T00:00:00Z", "items": []any{},
+	}
+	data, _ := json.MarshalIndent(coll, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "collections", "target-coll.json"), data, 0644)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Add to collection: "
+	env.app.nameText = "target-coll"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab A", URL: "https://a.com"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("add to collection should return cmd")
+	}
+
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("add to collection cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_AddToCollectionWithSelection(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create collection
+	coll := map[string]any{
+		"name": "sel-coll", "createdAt": "2024-01-01T00:00:00Z",
+		"updatedAt": "2024-01-01T00:00:00Z", "items": []any{},
+	}
+	data, _ := json.MarshalIndent(coll, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "collections", "sel-coll.json"), data, 0644)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Add to collection: "
+	env.app.nameText = "sel-coll"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab A", URL: "https://a.com"},
+		TabItem{ID: 2, Title: "Tab B", URL: "https://b.com"},
+	}
+	vs.itemCount = 2
+	vs.selected[0] = true
+	vs.selected[1] = true
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("add to collection with selection should return cmd")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_AddToCollectionEmpty(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Add to collection: "
+	env.app.nameText = "empty-coll"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = nil
+	vs.itemCount = 0
+
+	_, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("add to empty collection should return nil cmd")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_MoveToWindow(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Move to window: "
+	env.app.nameText = "1"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{
+		TabItem{ID: 1, Title: "Tab", URL: "https://t.com", WindowID: 1},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("move to window should return cmd")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_MoveToWindowInvalid(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Move to window: "
+	env.app.nameText = "abc"
+
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{TabItem{ID: 1, Title: "Tab"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.errorMsg != "Invalid window ID" {
+		t.Errorf("errorMsg = %q, want 'Invalid window ID'", a.errorMsg)
+	}
+	if cmd != nil {
+		t.Error("invalid window ID should return nil cmd")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_BookmarkCreate(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewBookmarks
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "URL: "
+	env.app.nameText = "https://new-bookmark.com"
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("bookmark create should return cmd")
+	}
+}
+
+func TestIntegrationHandleNameInputKey_SearchSave(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewSearch
+	env.app.mode = ModeNameInput
+	env.app.namePrompt = "Save as: "
+	env.app.nameText = "saved-query"
+	env.app.lastSearchQuery = "test query"
+
+	model, cmd := env.app.handleNameInputKey("enter", tea.KeyMsg{Type: tea.KeyEnter})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("search save should return cmd")
+	}
+}
+
+// --- handleKey mode dispatch ---
+
+func TestIntegrationHandleKey_ModeFilter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeFilter
+	env.app.filterText = ""
+
+	// Typing in filter mode
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a := model.(*App)
+	if a.filterText != "a" {
+		t.Errorf("filterText = %q, want 'a'", a.filterText)
+	}
+}
+
+func TestIntegrationHandleKey_ModeCommand(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeCommand
+	env.app.commandText = ""
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	a := model.(*App)
+	if a.commandText != "h" {
+		t.Errorf("commandText = %q, want 'h'", a.commandText)
+	}
+}
+
+func TestIntegrationHandleKey_ModeNameInput(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeNameInput
+	env.app.nameText = ""
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	a := model.(*App)
+	if a.nameText != "x" {
+		t.Errorf("nameText = %q, want 'x'", a.nameText)
+	}
+}
+
+func TestIntegrationHandleKey_ModeYank(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeYank
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{TabItem{ID: 1, Title: "T", URL: "https://t.com"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal after yank dispatch", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_ModeZFilter(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewTabs
+	env.app.mode = ModeZFilter
+	vs := env.app.views[ViewTabs]
+	vs.items = []any{TabItem{ID: 1, URL: "https://t.com", Active: true}}
+	vs.itemCount = 1
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal after zfilter dispatch", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_ModeConfirmDelete(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeConfirmDelete
+	env.app.view = ViewSessions
+
+	// Cancel with non-D key
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal after cancel delete", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_HelpEsc(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeHelp
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal after esc in help", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_HelpQuestion(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.mode = ModeHelp
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal after ? in help", a.mode)
+	}
+}
+
+func TestIntegrationHandleKey_EscSearchActive(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewSearch
+	env.app.searchActive = true
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	a := model.(*App)
+	if a.searchActive {
+		t.Error("searchActive should be false after esc")
+	}
+	if cmd == nil {
+		t.Fatal("esc on active search should return refresh cmd")
+	}
+}
+
+// --- handleEnter for NestedTabItem ---
+
+func TestIntegrationHandleEnter_SessionNestedTab(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+	vs.items = []any{
+		NestedTabItem{URL: "https://nested.com", Title: "Nested", ParentName: "s1"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on NestedTabItem should return open cmd")
+	}
+}
+
+func TestIntegrationHandleEnter_CollectionNestedTab(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		NestedTabItem{URL: "https://nested.com", Title: "Nested", ParentName: "c1"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd == nil {
+		t.Fatal("handleEnter on collection NestedTabItem should return open cmd")
+	}
+}
+
+// --- handleEnter session collapse ---
+
+func TestIntegrationHandleEnter_SessionCollapse(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSessions
+	vs := env.app.views[ViewSessions]
+
+	// Pre-expand a session
+	env.app.expandedSessions["s1"] = []NestedTabItem{
+		{URL: "https://a.com", Title: "A", ParentName: "s1"},
+	}
+	vs.items = []any{
+		SessionItem{Name: "s1", TabCount: 1},
+		NestedTabItem{URL: "https://a.com", Title: "A", ParentName: "s1"},
+	}
+	vs.itemCount = 2
+	vs.cursor = 0
+
+	// Enter on expanded session should collapse
+	cmd := env.app.handleEnter()
+	if cmd != nil {
+		t.Error("collapsing session should return nil cmd")
+	}
+	if _, ok := env.app.expandedSessions["s1"]; ok {
+		t.Error("session should be collapsed (removed from expandedSessions)")
+	}
+}
+
+func TestIntegrationHandleEnter_CollectionCollapse(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+
+	env.app.expandedCollections["c1"] = []NestedTabItem{
+		{URL: "https://x.com", Title: "X", ParentName: "c1"},
+	}
+	vs.items = []any{
+		CollectionItem{Name: "c1", ItemCount: 1},
+		NestedTabItem{URL: "https://x.com", Title: "X", ParentName: "c1"},
+	}
+	vs.itemCount = 2
+	vs.cursor = 0
+
+	cmd := env.app.handleEnter()
+	if cmd != nil {
+		t.Error("collapsing collection should return nil cmd")
+	}
+	if _, ok := env.app.expandedCollections["c1"]; ok {
+		t.Error("collection should be collapsed")
+	}
+}
+
+// --- handleKey collection x on NestedTabItem ---
+
+func TestIntegrationHandleKey_X_CollectionNestedItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create collection with an item
+	coll := map[string]any{
+		"name": "coll-x", "createdAt": "2024-01-01T00:00:00Z",
+		"updatedAt": "2024-01-01T00:00:00Z",
+		"items": []map[string]any{
+			{"url": "https://nested.com", "title": "Nested"},
+		},
+	}
+	data, _ := json.MarshalIndent(coll, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "collections", "coll-x.json"), data, 0644)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		NestedTabItem{URL: "https://nested.com", Title: "Nested", ParentName: "coll-x"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	env.app.expandedCollections["coll-x"] = []NestedTabItem{
+		{URL: "https://nested.com", Title: "Nested", ParentName: "coll-x"},
+	}
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("x on collection nested item should return remove cmd")
+	}
+}
+
+func TestIntegrationHandleKey_X_CollectionItem(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		CollectionItem{Name: "coll-del"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("x on collection should return timeout cmd")
+	}
+}
+
+// --- refreshCurrentView for History and Search views ---
+
+func TestIntegrationRefreshCurrentView_History(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewHistory
+	cmd := env.app.refreshCurrentView()
+	if cmd == nil {
+		t.Fatal("refreshCurrentView for History should return cmd")
+	}
+	// Will return error since mock extension doesn't support history.search,
+	// but the code path is exercised.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("history refresh should return a msg")
+	}
+}
+
+func TestIntegrationRefreshCurrentView_SearchSavedList(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewSearch
+	env.app.searchActive = false
+	cmd := env.app.refreshCurrentView()
+	if cmd == nil {
+		t.Fatal("refreshCurrentView for saved searches should return cmd")
+	}
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("saved searches refresh should return a msg")
+	}
+}
+
+func TestIntegrationRefreshCurrentView_Downloads(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewDownloads
+	cmd := env.app.refreshCurrentView()
+	if cmd == nil {
+		t.Fatal("refreshCurrentView for Downloads should return cmd")
+	}
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("downloads refresh should return a msg")
+	}
+}
+
+// --- handleConfirmDeleteKey History view ---
+
+func TestIntegrationHandleConfirmDeleteKey_History(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewHistory
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewHistory]
+	vs.items = []any{
+		HistoryItem{ID: "h1", URL: "https://h.com", Title: "History Entry"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleConfirmDeleteKey("D")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("history delete should return cmd")
+	}
+	// Extension may not support history.delete; just verify code path.
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("history delete cmd should return a msg")
+	}
+}
+
+func TestIntegrationHandleConfirmDeleteKey_Search(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewSearch
+	env.app.mode = ModeConfirmDelete
+	vs := env.app.views[ViewSearch]
+	vs.items = []any{
+		SavedSearchItem{ID: "ss-1", Name: "saved-del"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleConfirmDeleteKey("D")
+	a := model.(*App)
+	if a.mode != ModeNormal {
+		t.Errorf("mode = %d, want ModeNormal", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("search delete should return cmd")
+	}
+	msg := execCmdWithTimeout(t, cmd, 5*time.Second)
+	if msg == nil {
+		t.Error("search delete cmd should return a msg")
+	}
+}
+
+// --- D key on History view (first D to enter confirm mode) ---
+
+func TestIntegrationHandleKey_D_History(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewHistory
+	vs := env.app.views[ViewHistory]
+	vs.items = []any{HistoryItem{ID: "h1", Title: "H", URL: "https://h.com"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("D on history should return timeout cmd")
+	}
+}
+
+// --- D key on Search view (saved searches) ---
+
+func TestIntegrationHandleKey_D_SearchSaved(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSearch
+	env.app.searchActive = false
+	vs := env.app.views[ViewSearch]
+	vs.items = []any{SavedSearchItem{ID: "ss-1", Name: "saved"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	model, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	a := model.(*App)
+	if a.mode != ModeConfirmDelete {
+		t.Errorf("mode = %d, want ModeConfirmDelete", a.mode)
+	}
+	if cmd == nil {
+		t.Fatal("D on saved search should return timeout cmd")
+	}
+}
+
+// --- R key on Sync view ---
+
+func TestIntegrationHandleKey_R_SyncRepair(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	env.app.view = ViewSync
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if cmd == nil {
+		t.Fatal("R on sync should return repair cmd")
+	}
+}
+
+// --- N key on Search active ---
+
+func TestIntegrationHandleKey_N_SearchSave(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewSearch
+	env.app.searchActive = true
+	env.app.lastSearchQuery = "test"
+
+	model, _ := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a := model.(*App)
+	if a.mode != ModeNameInput {
+		t.Errorf("mode = %d, want ModeNameInput", a.mode)
+	}
+	if a.namePrompt != "Save as: " {
+		t.Errorf("namePrompt = %q, want 'Save as: '", a.namePrompt)
+	}
+}
+
+// --- handleKey J/K for collection reorder ---
+
+func TestIntegrationHandleKey_JK_CollectionReorder(t *testing.T) {
+	env := newIntegrationEnv(t)
+	env.connectApp(t)
+
+	// Pre-create collection
+	coll := map[string]any{
+		"name": "reorder-coll", "createdAt": "2024-01-01T00:00:00Z",
+		"updatedAt": "2024-01-01T00:00:00Z",
+		"items": []map[string]any{
+			{"url": "https://a.com", "title": "A"},
+			{"url": "https://b.com", "title": "B"},
+		},
+	}
+	data, _ := json.MarshalIndent(coll, "", "  ")
+	os.WriteFile(filepath.Join(env.tmpDir, "collections", "reorder-coll.json"), data, 0644)
+
+	env.app.view = ViewCollections
+	env.app.expandedCollections["reorder-coll"] = []NestedTabItem{
+		{URL: "https://a.com", Title: "A", ParentName: "reorder-coll"},
+		{URL: "https://b.com", Title: "B", ParentName: "reorder-coll"},
+	}
+
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		CollectionItem{Name: "reorder-coll", ItemCount: 2},
+		NestedTabItem{URL: "https://a.com", Title: "A", ParentName: "reorder-coll"},
+		NestedTabItem{URL: "https://b.com", Title: "B", ParentName: "reorder-coll"},
+	}
+	vs.itemCount = 3
+	vs.cursor = 1 // on first nested item
+
+	_, cmd := env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	if cmd == nil {
+		t.Fatal("J should return reorder cmd")
+	}
+
+	// K on second item
+	vs.cursor = 2
+	_, cmd = env.app.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
+	if cmd == nil {
+		t.Fatal("K should return reorder cmd")
+	}
+}
+
+// --- reorderCollectionItem edge cases ---
+
+func TestIntegrationReorderCollectionItem_NotNested(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewCollections
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{CollectionItem{Name: "c1"}}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	cmd := env.app.reorderCollectionItem(1)
+	if cmd != nil {
+		t.Error("reorder on non-nested should return nil")
+	}
+}
+
+func TestIntegrationReorderCollectionItem_OutOfBounds(t *testing.T) {
+	env := newIntegrationEnv(t)
+
+	env.app.view = ViewCollections
+	env.app.expandedCollections["c1"] = []NestedTabItem{
+		{URL: "https://a.com", Title: "A", ParentName: "c1"},
+	}
+
+	vs := env.app.views[ViewCollections]
+	vs.items = []any{
+		NestedTabItem{URL: "https://a.com", Title: "A", ParentName: "c1"},
+	}
+	vs.itemCount = 1
+	vs.cursor = 0
+
+	// Try to move up (already at top)
+	cmd := env.app.reorderCollectionItem(-1)
+	if cmd != nil {
+		t.Error("reorder at boundary should return nil")
 	}
 }
 

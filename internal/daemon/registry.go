@@ -67,6 +67,8 @@ var ActionRegistry = []ActionMeta{
 	{"collections.delete", LayerLocal, TargetDisallowed, CLISupported},
 	{"collections.addItems", LayerLocal, TargetDisallowed, CLISupported},
 	{"collections.removeItems", LayerLocal, TargetDisallowed, CLISupported},
+	{"collections.rename", LayerLocal, TargetDisallowed, CLIInternal},
+	{"collections.reorder", LayerLocal, TargetDisallowed, CLIInternal},
 	{"collections.restore", LayerHybrid, TargetRequired, CLISupported},
 
 	// --- Bookmarks (cmd/bookmarks.go) ---

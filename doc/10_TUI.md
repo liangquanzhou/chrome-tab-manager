@@ -1,275 +1,139 @@
 # CTM — TUI Interaction Guideline
 
-交互设计的唯一来源 (source of truth)。Bubble Tea 架构。
+本文件定义 **稳定的 TUI 交互约束**。
+
+它不再手维护完整键位表；易变键位应以代码和运行时 help 为准。
+
+Live sources:
+
+- Key bindings / help surface: `internal/tui/keymap.go`
+- TUI state machine / handlers: `internal/tui/app.go`
+- 顶层交互模型与用户旅程: `04_INTERACTION.md`
+- 历史完整 TUI 规范: `doc/archive/10_TUI_FULL.md`
+
+---
 
 ## 1. Interaction Invariants
 
-非协商条件。违反前必须先更新本文档：
+以下是不应轻易改变的交互契约：
 
-1. **Esc** = 取消/返回/清除，不修改持久状态
-2. **Enter** = 当前焦点项的主操作
-3. **Space** = 选中/取消选中切换
-4. **q** 在 Normal mode 退出；overlay/input mode 中无效
-5. 全局视图切换键不抢占局部最有价值键位
-6. 持久化数据删除必须 D-D 二次确认
-7. 每次状态变更必须有可见反馈
-8. Header 始终显示当前 target
-9. 用户始终能回答："我在哪？什么被选中？Enter 会做什么？"
-10. Header、Status bar、Help overlay、实际行为一致（单数据源 keymap.go）
-11. **Cursor isolation**：数据更新只影响对应 view 的 cursor/selection
+1. `Esc` = 取消 / 返回 / 清除，不隐式修改持久状态
+2. `Enter` = 当前焦点项的主操作
+3. `Space` = 选中 / 取消选中切换
+4. 持久化删除必须通过二次确认 chord（`D D` 或 `x x`）
+5. 每次状态变更必须有可见反馈
+6. 用户始终能回答：我在哪、当前选中了什么、`Enter` 会做什么
+7. Header / Status / Help / 实际行为必须一致
+8. 数据刷新只影响对应 view 的 cursor / selection（cursor isolation）
+9. View 切换不应破坏其他 view 的局部状态
 
-## 2. Views
+---
 
-### Phase 5: 5 Views
+## 2. Scope Boundary
 
-| View | 主要功能 |
-|------|----------|
-| Targets | 选择 target，设 default，编辑 label |
-| Tabs | 浏览/搜索/选择/激活/关闭/分组/收藏 |
-| Groups | 查看/展开/折叠/重命名/重色/解组 |
-| Sessions | 保存/预览/恢复/删除 |
-| Collections | 浏览/创建/展开/恢复/删除 |
+TUI 负责：
 
-### Phase 7+: 3 Additional Views
+- 浏览大量资源
+- 交互式筛选与整理
+- 预览与上下文切换
+- 高价值快捷操作
 
-| View | 主要功能 |
-|------|----------|
-| Bookmarks | 树形浏览/搜索/tag/export |
-| Workspaces | 创建/切换/管理 |
-| Sync | 同步状态/冲突/修复 |
+TUI 不负责：
 
-### View Switching
+- 完整脚本化批处理
+- 安装与诊断的全部细节
+- 重新定义 CLI / contract 语义
 
-| 键 | 作用 |
-|----|------|
-| `Tab` / `Shift-Tab` | 下一个/上一个视图（循环） |
-| `` ` `` | 切到 Targets |
-| `1`-`4` | Tabs / Groups / Sessions / Collections |
-| `5`-`7` | Bookmarks / Workspaces / Sync (Phase 7+) |
+---
 
-## 3. Global Keys (Normal mode)
+## 3. Views
 
-| 键 | 功能 |
-|----|------|
-| `q` | 退出 |
-| `Esc` | 关闭 overlay / 取消 / 清除 error |
-| `?` | 帮助 overlay |
-| `:` | 命令面板 |
-| `/` | 搜索/过滤 |
-| `r` | 刷新 |
+当前 top-level views 由代码与 `19_CAPABILITY_MATRIX.md` 共同反映。
 
-## 4. List Navigation (通用)
+TUI 设计上分三类：
 
-| 键 | 功能 |
-|----|------|
-| `j`/`↓`, `k`/`↑` | 下移/上移 |
-| `gg`/`Home`, `G`/`End` | 跳顶/跳底 |
-| `Ctrl-D`/`Ctrl-U` | 下/上翻半页 |
-| `Space` | 切换选中 |
-| `Enter` | 主操作 |
+| View Class | Examples | 主要目标 |
+|------------|----------|----------|
+| Runtime | Targets, Tabs, Groups | 处理当前在线浏览器状态 |
+| Library | Sessions, Collections, Bookmarks | 浏览与整理长期资源 |
+| Global / Infra | Workspaces, Search, Sync, History, Downloads | 跨资源入口与系统状态 |
 
-`gg` 实现：第一个 `g` 设 `pendingG=true`，200ms 内再按 `g` → 跳顶；超时或其他键 → 取消。
+要求：
 
-## 5. View-Specific Keys
+- 每个 view 有明确主操作
+- 每个 view 的 destructive action 必须有确认
+- 每个 view 的 empty state / error state / loading state 必须可辨认
 
-### Tabs View
-| 键 | 功能 | 前提 |
-|----|------|------|
-| `Enter` | 激活 tab | 有焦点 |
-| `x` | 关闭焦点/选中 tabs | — |
-| `G` | 创建 group → title 输入 | 有选中 |
-| `a` | 添加到 collection → picker | 有选中 |
-| `o` | URL 详情/预览 | 有焦点 |
-| `n` | 新 tab (`:open <url>`) | — |
-| `u` | 清除选中 | 有选中 |
-| `Ctrl-A` | 全选 | — |
+---
 
-### Groups View
-| 键 | 功能 |
-|----|------|
-| `Enter` | 展开/折叠 group；子 tab 上激活 |
-| `e` | 编辑 title/color |
-| `u` | 解组 |
-| `a` | 将选中 tabs 加入 group |
+## 4. Input Modes
 
-### Sessions View
-| 键 | 功能 |
-|----|------|
-| `Enter` | 预览 session |
-| `o` | 恢复 session |
-| `n` | 保存新 session → name 输入 |
-| `D` | 删除 (D-D 确认) |
+TUI 的稳定模式边界应保持清晰：
 
-### Collections View
-| 键 | 功能 |
-|----|------|
-| `Enter` | 展开/折叠 |
-| `o` | 子项打开 URL；collection 恢复全部 |
-| `n` | 创建新 collection → name 输入 |
-| `D` | 删除 (D-D 确认) |
+| Mode | 目的 | 退出方式 |
+|------|------|----------|
+| Normal | 浏览与执行主操作 | 切换到其他 mode 或 quit |
+| Filter | view-local filter / search input | `Enter` / `Esc` |
+| Command | `:` command palette style command | `Enter` / `Esc` |
+| NameInput | 命名、URL、label 等轻输入 | `Enter` / `Esc` |
+| Help | 查看帮助 | `Esc` / `q` / `?` |
+| Yank / Confirm / Z-like chord modes | 短暂二段式动作 | 第二键 / 超时 / `Esc` |
 
-### Targets View
-| 键 | 功能 |
-|----|------|
-| `Enter` | 激活 target → 跳到 Tabs |
-| `d` | 设为 default |
-| `e` | 编辑 label |
+要求：
 
-### Bookmarks View (Phase 7)
-| 键 | 功能 |
-|----|------|
-| `Enter` | 展开/折叠文件夹；书签上打开 URL |
-| `h`/`←`, `l`/`→` | 折叠/展开（树导航） |
-| `/` | 搜索 (title/url/tag) |
-| `t` | 设置 tag |
-| `n` | 添加 note |
-| `a` | 添加到 collection |
-| `r` | 重新镜像 |
+- mode 切换优先于普通 view key 处理
+- chord mode 必须有超时和可见提示
+- overlay / input mode 中，全局退出键不应误伤持久状态
 
-### Workspaces View (Phase 8)
-| 键 | 功能 |
-|----|------|
-| `Enter` | 展开 workspace |
-| `o` | 切换到 workspace |
-| `n` | 创建新 workspace |
-| `e` | 编辑关联资源 |
-| `D` | 删除 (D-D) |
-| `a` | 关联 session/collection |
+---
 
-### Sync View (Phase 8)
-| 键 | 功能 |
-|----|------|
-| `Enter` | 冲突详情 |
-| `o` | 修复/解决冲突 |
-| `r` | 手动触发同步 |
-| `R` | 修复/重建 |
+## 5. Feedback Model
 
-## 6. Chord Keys
+TUI 必须保持三通道反馈：
 
-### `y` — Yank/Copy
-| 序列 | 功能 |
-|------|------|
-| `y` `y` | 复制 URL |
-| `y` `n` | 复制 display name |
-| `y` `h` | 复制 host/domain |
-| `y` `m` | 复制 Markdown 链接 |
-| `y` `g` | 复制 group/session/collection 为 Markdown 列表 |
+1. **Error** — 明确失败原因，可清除
+2. **Confirm / Hint** — 当前 chord 或待确认动作
+3. **Toast / Status** — 成功反馈、轻提示、状态变化
 
-按 `y` → StatusBar 显示后续键提示。合法键 → 复制 + Toast。非法键/2s 超时 → 取消。
+优先级：
 
-### `z` — Filter
-| 序列 | 功能 |
-|------|------|
-| `z` `g` | 已分组 tabs |
-| `z` `u` | 未分组 tabs |
-| `z` `p` | 已固定 tabs |
-| `z` `w` | 当前窗口 tabs |
-| `z` `i` | 隐藏/显示内部页面 |
+`Error > ConfirmHint > Toast > Normal Status`
 
-再按同一组合 → 取消过滤。过滤激活时 header 显示标签。
+---
 
-### `D` — Confirm Delete
-`D` → StatusBar 显示 `Press D again to delete "<name>"` → `D`(2s 内) → 执行删除 + Toast。非确认键/超时 → 取消。仅 Sessions/Collections/Workspaces view。
+## 6. Layout Rules
 
-## 7. Input Modes State Machine
+- Header 持续显示当前 view 与 target 上下文
+- Main content 聚焦单一资源域，不同时塞多个重交互区域
+- Status bar 不承载隐藏业务语义，只显示状态与反馈
+- Preview / detail panel 属于增强信息，不应抢走主列表的定位清晰度
 
-```
-Normal
-  ├─ /  → Filter ─── Enter → Normal (keep filter) / Esc → Normal (clear)
-  ├─ :  → Command ─── Enter → Normal (execute) / Esc → Normal
-  ├─ ?  → Help ─── Esc/q/? → Normal
-  ├─ y  → Yank ─── y/n/h/m/g → Normal (copy) / other/timeout → Normal
-  ├─ z  → ZFilter ─── g/u/p/w/i → Normal (filter) / other/timeout → Normal
-  ├─ D  → ConfirmDelete ─── D → Normal (delete) / other/timeout → Normal
-  ├─ G  → GroupTitle ─── Enter → Normal (create) / Esc → Normal
-  ├─ n  → NameInput ─── Enter → Normal (save) / Esc → Normal
-  └─ a  → CollectionPicker ─── Enter → Normal (add) / Esc → Normal
-```
+---
 
-Bubble Tea 实现：`InputMode` 是 `AppState` 字段。`App.Update` 最外层 switch on `InputMode`。非 Normal mode 时全局键不传递。
+## 7. Data Ownership
 
-## 8. Three-Channel Feedback
+TUI 不是业务真相源。
 
-| Channel | 用途 | 清除方式 | 位置 |
-|---------|------|----------|------|
-| **Toast** | 操作成功 | 3s `tea.Tick` 自动消失 | StatusBar 右侧 |
-| **Error** | 持久错误 | 用户 Esc | StatusBar 全宽红色 |
-| **ConfirmHint** | D-D 确认提示 | 非确认键/2s 超时 | StatusBar 中央 |
+- 业务语义来自 `12_CONTRACTS.md`
+- 当前 capability 完整度来自 `19_CAPABILITY_MATRIX.md`
+- TUI 只消费 daemon contract，不发明自己的业务模型
 
-优先级：Error > ConfirmHint > Toast > 默认 action hints。
+因此：
 
-## 9. Search & Filter
+- 当 key binding 改变时，优先改 `keymap.go`
+- 当动作语义改变时，优先改 `12_CONTRACTS.md`
+- 当 surface 支持等级改变时，优先改 `19_CAPABILITY_MATRIX.md`
 
-- `/` 进入搜索 → 输入框出现在列表上方 → 每次按键即时过滤
-- Enter → 保留过滤，cursor 回到列表
-- Esc → 清除过滤
+---
 
-| View | 搜索字段 |
-|------|----------|
-| Tabs | title, url |
-| Groups | group title |
-| Sessions | session name |
-| Collections | collection name, 展开后 item title/url |
+## 8. Review Gate
 
-## 10. Command Palette (`:` mode)
+任何较大的 TUI 改动，至少回答：
 
-| 命令 | 功能 |
-|------|------|
-| `:target` | 切到 Targets view |
-| `:target default` | 设当前 target 为 default |
-| `:open <url>` | 打开新 tab |
-| `:save <name>` | 保存 session |
-| `:restore <name>` | 恢复 session |
-| `:help` | 帮助 |
-| `:quit` / `:q` | 退出 |
+1. 是否改变了 `Esc` / `Enter` / delete confirm 语义？
+2. 是否破坏 Header / Help / 实际行为一致性？
+3. 是否影响 cursor isolation？
+4. 是否引入了新的 mode 或新的隐式状态？
+5. 这个变化属于 TUI 表面，还是其实在改 contract / product model？
 
-支持前缀匹配和 Tab 补全。
-
-## 11. Screen Layout
-
-```
-+------------------------------------------------------+
-| CTM  [1]Tabs [2]Groups [3]Sessions [4]Collections  * |  Header
-|                          target: work (stable)        |
-+------------------------------------------------------+
-| > filter text_                                        |  Filter (visible when active)
-+------------------------------------------------------+
-|   12345 [Work]  Getting Started with React...         |
-|   12346 [Work]  React Hooks Documentation             |
-| > 12347         GitHub - user/repo/pull/42            |  > = cursor
-| x 12349         Stack Overflow - How to...            |  x = selected
-+------------------------------------------------------+
-| [Enter]activate [x]close [G]roup  1 selected  | OK    |  StatusBar
-+------------------------------------------------------+
-```
-
-Header 固定 2 行，StatusBar 固定 1 行，中间自适应。
-
-## 12. Review Gate
-
-每次 TUI 变更必须同时更新：
-
-1. 本文档的交互契约
-2. `keymap.go` 键绑定
-3. Help overlay 内容（从 keymap.go 自动生成）
-4. Status bar 文本（从 keymap.go 自动生成）
-5. teatest 测试
-
-### Review Questions
-
-1. 这个键是否可被发现（help/status bar 中显示）？
-2. 同一键在其他 view 含义是否一致？
-3. 当前 mode 是否对用户明显？
-4. 用户能否用 Esc 退出？
-5. 该操作在多 target 下是否安全？
-6. 破坏性操作是否有确认步骤？
-7. Header、status bar、help overlay 是否都更新了？
-
-## 13. Anti-Patterns
-
-- 同一键在不同 view 一个导航一个修改，无可见 mode 切换
-- 持久删除用小写单键且无确认
-- 隐藏快捷键（不在 help/status bar 中）
-- 新增键绑定不更新测试和文档
-- 非焦点 view 的数据更新修改 cursor/selection
-- view 代码中硬编码按键描述（必须从 keymap.go 生成）
+如果答案落在后两类，应同步回到 `04_INTERACTION.md`、`12_CONTRACTS.md` 或 `19_CAPABILITY_MATRIX.md`。

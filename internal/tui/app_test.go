@@ -2741,8 +2741,12 @@ func TestUpdateRefreshMsgBookmarks(t *testing.T) {
 	a = model.(*App)
 
 	vs := a.views[ViewBookmarks]
-	if vs.itemCount != 2 {
-		t.Errorf("itemCount = %d, want 2 (folder + child)", vs.itemCount)
+	// Default is all-folded on first load, so only the folder is visible
+	if vs.itemCount != 1 {
+		t.Errorf("itemCount = %d, want 1 (folder only, children folded)", vs.itemCount)
+	}
+	if !a.collapsedFolders["1"] {
+		t.Error("folder should be collapsed by default")
 	}
 }
 

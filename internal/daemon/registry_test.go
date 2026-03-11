@@ -61,6 +61,8 @@ func TestRegistryCoversDispatcher(t *testing.T) {
 		"collections.delete",
 		"collections.addItems",
 		"collections.removeItems",
+		"collections.rename",
+		"collections.reorder",
 		"collections.restore",
 	}
 

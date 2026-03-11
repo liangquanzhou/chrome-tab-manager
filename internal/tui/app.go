@@ -154,7 +154,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		if msg.payload != nil {
 			a.applyRefresh(msg.payload)
-			return a, a.waitForEvent()
+			cmds := []tea.Cmd{a.waitForEvent()}
+			if a.pendingPreviewFetch {
+				a.pendingPreviewFetch = false
+				if pc := a.fetchTabPreview(); pc != nil {
+					cmds = append(cmds, pc)
+				}
+			}
+			return a, tea.Batch(cmds...)
 		}
 		// nil payload = action completed without refresh data (delete, subscribe, etc.)
 		// trigger an explicit re-fetch so the list updates immediately
@@ -274,7 +281,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if a.pendingG && key == "g" {
 		a.pendingG = false
 		a.currentView().cursor = 0
-		if a.view == ViewTabs && a.previewMode > 0 {
+		if a.view == ViewTabs {
 			a.pendingPreviewFetch = true
 		}
 		return a, nil
@@ -359,7 +366,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if vs.cursor < 0 {
 			vs.cursor = 0
 		}
-		if a.view == ViewTabs && vs.cursor != old && a.previewMode > 0 {
+		if a.view == ViewTabs && vs.cursor != old {
 			a.pendingPreviewFetch = true
 		}
 	case "ctrl+d":
@@ -383,17 +390,41 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.view == ViewDownloads {
 			return a, a.cancelDownload()
 		}
+		if a.view == ViewSessions {
+			name := a.currentItemName()
+			if name != "" {
+				a.mode = ModeConfirmDelete
+				a.confirmHint = fmt.Sprintf("Press x to delete %q", name)
+				return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+			}
+		}
 		if a.view == ViewCollections {
 			vs := a.currentView()
 			idx := vs.realIndex(vs.cursor)
 			if idx < len(vs.items) {
-				if nested, ok := vs.items[idx].(NestedTabItem); ok {
+				switch item := vs.items[idx].(type) {
+				case NestedTabItem:
+					parentName := item.ParentName
+					removeURL := item.URL
 					return a, a.doRequest("collections.removeItems", map[string]any{
-						"name": nested.ParentName,
-						"urls": []string{nested.URL},
+						"name": parentName,
+						"urls": []string{removeURL},
 					}, func(_ json.RawMessage) {
-						a.toast = fmt.Sprintf("Removed %q from %q", truncate(nested.Title, 20), nested.ParentName)
+						a.toast = fmt.Sprintf("Removed %q from %q", truncate(item.Title, 20), parentName)
+						if tabs, ok := a.expandedCollections[parentName]; ok {
+							var updated []NestedTabItem
+							for _, t := range tabs {
+								if t.URL != removeURL {
+									updated = append(updated, t)
+								}
+							}
+							a.expandedCollections[parentName] = updated
+						}
 					})
+				case CollectionItem:
+					a.mode = ModeConfirmDelete
+					a.confirmHint = fmt.Sprintf("Press x to delete %q", item.Name)
+					return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 				}
 			}
 		}
@@ -423,10 +454,15 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.handleRestore()
 	case "D":
 		if a.view == ViewSessions || a.view == ViewCollections || a.view == ViewWorkspaces {
-			a.mode = ModeConfirmDelete
 			name := a.currentItemName()
+			if name == "" {
+				// NestedTabItem — 不能直接删除，提示用 x 移除
+				a.toast = "Use x to remove item"
+				return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+			}
+			a.mode = ModeConfirmDelete
 			a.confirmHint = fmt.Sprintf("Press D again to delete %q", name)
-			return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+			return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 		}
 		if a.view == ViewGroups {
 			vs := a.currentView()
@@ -435,7 +471,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				g := vs.items[idx].(GroupItem)
 				a.mode = ModeConfirmDelete
 				a.confirmHint = fmt.Sprintf("Press D again to delete group %q", g.Title)
-				return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+				return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 			}
 		}
 		if a.view == ViewBookmarks {
@@ -454,7 +490,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					label += " (folder)"
 				}
 				a.confirmHint = fmt.Sprintf("Press D again to delete %q from Chrome", label)
-				return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+				return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 			}
 		}
 		if a.view == ViewHistory {
@@ -464,7 +500,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				h := vs.items[idx].(HistoryItem)
 				a.mode = ModeConfirmDelete
 				a.confirmHint = fmt.Sprintf("Press D again to delete %q from history", h.Title)
-				return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+				return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 			}
 		}
 		if a.view == ViewSearch && !a.searchActive {
@@ -474,24 +510,24 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if saved, ok := vs.items[idx].(SavedSearchItem); ok {
 					a.mode = ModeConfirmDelete
 					a.confirmHint = fmt.Sprintf("Press D again to delete saved search %q", saved.Name)
-					return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+					return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 				}
 			}
 		}
 	case "y":
 		a.mode = ModeYank
 		a.confirmHint = "y:URL n:name h:host m:markdown"
-		return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+		return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 	case "z":
 		if a.view == ViewTabs {
 			a.mode = ModeZFilter
 			a.confirmHint = "h:host p:pinned g:grouped a:active c:clear"
-			return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+			return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 		}
 		if a.view == ViewBookmarks {
 			a.mode = ModeZFilter
 			a.confirmHint = "M:fold all  R:unfold all"
-			return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
+			return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return chordTimeoutMsg{} })
 		}
 	case "v":
 		if a.view == ViewTabs {
@@ -502,24 +538,15 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if tab, ok := a.currentTab(); ok {
 				delete(a.previewText, tab.ID)
 			}
-			if a.previewMode == 1 {
-				return a, tea.Batch(a.fetchTabPreview(), tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} }))
+			cmds := []tea.Cmd{tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })}
+			if pc := a.fetchTabPreview(); pc != nil {
+				cmds = append(cmds, pc)
 			}
-			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+			return a, tea.Batch(cmds...)
 		}
 	case "s":
 		if a.view == ViewTabs {
-			if a.previewMode == 2 {
-				a.previewMode = 0
-			} else {
-				a.previewMode = 2
-			}
-			modes := []string{"info", "text", "screenshot"}
-			a.toast = "Preview: " + modes[a.previewMode]
-			if a.previewMode == 2 {
-				return a, tea.Batch(a.fetchTabPreview(), tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} }))
-			}
-			return a, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastClearMsg{} })
+			return a, a.captureAndOpenExternal()
 		}
 	case "M":
 		if a.view == ViewTabs {
@@ -548,6 +575,23 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.namePrompt = "New name: "
 			return a, nil
 		}
+		if a.view == ViewCollections {
+			name := a.currentItemName()
+			if name != "" {
+				a.mode = ModeNameInput
+				a.nameText = name
+				a.namePrompt = "Rename: "
+				return a, nil
+			}
+		}
+	case "J":
+		if a.view == ViewCollections {
+			return a, a.reorderCollectionItem(1)
+		}
+	case "K":
+		if a.view == ViewCollections {
+			return a, a.reorderCollectionItem(-1)
+		}
 	case "P":
 		if a.view == ViewTabs {
 			return a, a.openW3M()
@@ -562,10 +606,19 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "c":
 		if a.view == ViewTargets {
-			return a, a.doRequest("targets.clearDefault", nil, func(_ json.RawMessage) {
+			return a, func() tea.Msg {
+				_, err := a.client.Request(a.ctx, "targets.clearDefault", nil, nil)
+				if err != nil {
+					return errMsg{err}
+				}
 				a.selectedTarget = ""
 				a.toast = "Default target cleared"
-			})
+				resp, err := a.client.Request(a.ctx, "targets.list", nil, nil)
+				if err != nil {
+					return toastMsg(a.toast)
+				}
+				return refreshMsg{payload: resp.Payload}
+			}
 		}
 	case "d":
 		if a.view == ViewTargets {
@@ -654,6 +707,7 @@ func (a *App) handleFilterKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.view == ViewSearch && a.filterText != "" {
 			query := a.filterText
 			a.filterText = ""
+			a.currentView().filtered = nil // clear stale filter before search
 			return a, a.performSearch(query)
 		}
 		a.applyFilter()
@@ -716,6 +770,34 @@ func (a *App) handleNameInputKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 			return a, a.saveSession(name)
 		}
 		if a.view == ViewCollections {
+			if a.namePrompt == "Rename: " {
+				oldName := a.currentItemName()
+				if oldName != "" && name != oldName {
+					return a, func() tea.Msg {
+						_, err := a.client.Request(a.ctx, "collections.rename", map[string]any{
+							"name": oldName, "newName": name,
+						}, nil)
+						if err != nil {
+							return errMsg{err}
+						}
+						a.toast = fmt.Sprintf("Renamed %q → %q", oldName, name)
+						// Update expanded cache key
+						if tabs, ok := a.expandedCollections[oldName]; ok {
+							delete(a.expandedCollections, oldName)
+							for i := range tabs {
+								tabs[i].ParentName = name
+							}
+							a.expandedCollections[name] = tabs
+						}
+						resp, err := a.client.Request(a.ctx, "collections.list", nil, nil)
+						if err != nil {
+							return toastMsg(a.toast)
+						}
+						return refreshMsg{payload: resp.Payload}
+					}
+				}
+				return a, nil
+			}
 			return a, a.createCollection(name)
 		}
 		if a.view == ViewWorkspaces {
@@ -725,15 +807,34 @@ func (a *App) handleNameInputKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 				idx := vs.realIndex(vs.cursor)
 				if idx < len(vs.items) {
 					ws := vs.items[idx].(WorkspaceItem)
-					return a, a.doRequest("workspace.update", map[string]any{"id": ws.ID, "name": name}, func(_ json.RawMessage) {
+					wsID := ws.ID
+					return a, func() tea.Msg {
+						_, err := a.client.Request(a.ctx, "workspace.update", map[string]any{"id": wsID, "name": name}, nil)
+						if err != nil {
+							return errMsg{err}
+						}
 						a.toast = fmt.Sprintf("Renamed workspace to %q", name)
-					})
+						resp, err := a.client.Request(a.ctx, "workspace.list", nil, nil)
+						if err != nil {
+							return toastMsg(a.toast)
+						}
+						return refreshMsg{payload: resp.Payload}
+					}
 				}
 				return a, nil
 			}
-			return a, a.doRequest("workspace.create", map[string]any{"name": name}, func(_ json.RawMessage) {
+			return a, func() tea.Msg {
+				_, err := a.client.Request(a.ctx, "workspace.create", map[string]any{"name": name}, nil)
+				if err != nil {
+					return errMsg{err}
+				}
 				a.toast = fmt.Sprintf("Workspace %q created", name)
-			})
+				resp, err := a.client.Request(a.ctx, "workspace.list", nil, nil)
+				if err != nil {
+					return toastMsg(a.toast)
+				}
+				return refreshMsg{payload: resp.Payload}
+			}
 		}
 		if a.view == ViewTabs && a.namePrompt == "Group name: " {
 			// groups.create: collect selected tabs (or current tab) as tabIds
@@ -802,21 +903,50 @@ func (a *App) handleNameInputKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 			if len(items) == 0 {
 				return a, nil
 			}
-			itemCount := len(items)
-			return a, a.doRequest("collections.addItems", map[string]any{"name": name, "items": items}, func(_ json.RawMessage) {
-				a.toast = fmt.Sprintf("Added %d tab(s) to %q", itemCount, name)
-			})
+			return a, func() tea.Msg {
+				resp, err := a.client.Request(a.ctx, "collections.addItems", map[string]any{"name": name, "items": items}, nil)
+				if err != nil {
+					return errMsg{err}
+				}
+				var result struct {
+					Added   int `json:"added"`
+					Skipped int `json:"skipped"`
+				}
+				json.Unmarshal(resp.Payload, &result)
+				if result.Skipped > 0 && result.Added == 0 {
+					a.toast = fmt.Sprintf("All %d tab(s) already in %q", result.Skipped, name)
+				} else if result.Skipped > 0 {
+					a.toast = fmt.Sprintf("Added %d, skipped %d duplicate(s) in %q", result.Added, result.Skipped, name)
+				} else {
+					a.toast = fmt.Sprintf("Added %d tab(s) to %q", result.Added, name)
+				}
+				// Refresh collections if that view has expanded items
+				if len(a.expandedCollections) > 0 {
+					delete(a.expandedCollections, name) // invalidate expanded cache for this collection
+				}
+				return refreshMsg{}
+			}
 		}
 		if a.view == ViewTargets {
 			vs := a.currentView()
 			idx := vs.realIndex(vs.cursor)
 			if idx < len(vs.items) {
 				t := vs.items[idx].(TargetItem)
-				return a, a.doRequest("targets.label", map[string]string{
-					"targetId": t.TargetID, "label": name,
-				}, func(_ json.RawMessage) {
+				targetID := t.TargetID
+				return a, func() tea.Msg {
+					_, err := a.client.Request(a.ctx, "targets.label", map[string]string{
+						"targetId": targetID, "label": name,
+					}, nil)
+					if err != nil {
+						return errMsg{err}
+					}
 					a.toast = fmt.Sprintf("Target labeled %q", name)
-				})
+					resp, err := a.client.Request(a.ctx, "targets.list", nil, nil)
+					if err != nil {
+						return toastMsg(a.toast)
+					}
+					return refreshMsg{payload: resp.Payload}
+				}
 			}
 		}
 		if a.view == ViewBookmarks {
@@ -839,12 +969,22 @@ func (a *App) handleNameInputKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 		}
 		if a.view == ViewSearch {
 			// Save current search query
-			return a, a.doRequest("search.saved.create", map[string]any{
-				"name":  name,
-				"query": map[string]any{"query": a.lastSearchQuery},
-			}, func(_ json.RawMessage) {
+			lastQuery := a.lastSearchQuery
+			return a, func() tea.Msg {
+				_, err := a.client.Request(a.ctx, "search.saved.create", map[string]any{
+					"name":  name,
+					"query": map[string]any{"query": lastQuery},
+				}, nil)
+				if err != nil {
+					return errMsg{err}
+				}
 				a.toast = fmt.Sprintf("Search saved as %q", name)
-			})
+				resp, err := a.client.Request(a.ctx, "search.saved.list", nil, nil)
+				if err != nil {
+					return toastMsg(a.toast)
+				}
+				return refreshMsg{payload: resp.Payload}
+			}
 		}
 	case "esc":
 		a.mode = ModeNormal
@@ -874,22 +1014,47 @@ func (a *App) handleYankKey(key string) (tea.Model, tea.Cmd) {
 	idx := vs.realIndex(vs.cursor)
 	var text string
 
-	switch a.view {
-	case ViewTabs:
-		if idx < len(vs.items) {
-			tab := vs.items[idx].(TabItem)
-			switch key {
-			case "y":
-				text = tab.URL
-			case "n":
-				text = tab.Title
-			case "h":
-				text = extractHost(tab.URL)
-			case "m":
-				text = fmt.Sprintf("[%s](%s)", tab.Title, tab.URL)
-			default:
-				return a, nil
-			}
+	// Extract URL and title from any view item
+	var url, title string
+	if idx < len(vs.items) {
+		switch v := vs.items[idx].(type) {
+		case TabItem:
+			url, title = v.URL, v.Title
+		case NestedTabItem:
+			url, title = v.URL, v.Title
+		case HistoryItem:
+			url, title = v.URL, v.Title
+		case BookmarkItem:
+			url, title = v.URL, v.Title
+		case SessionItem:
+			title = v.Name
+		case CollectionItem:
+			title = v.Name
+		case WorkspaceItem:
+			title = v.Name
+		case SearchResultItem:
+			url, title = v.URL, v.Title
+		}
+	}
+
+	switch key {
+	case "y":
+		if url != "" {
+			text = url
+		} else {
+			text = title
+		}
+	case "n":
+		text = title
+	case "h":
+		if url != "" {
+			text = extractHost(url)
+		}
+	case "m":
+		if url != "" && title != "" {
+			text = fmt.Sprintf("[%s](%s)", title, url)
+		} else {
+			text = title
 		}
 	default:
 		return a, nil
@@ -992,7 +1157,8 @@ func (a *App) handleZFilterKey(key string) (tea.Model, tea.Cmd) {
 
 func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 	a.confirmHint = ""
-	if key != "D" {
+	// Accept both D (for DD chord) and x (for xx chord on sessions/collections)
+	if key != "D" && key != "x" {
 		a.mode = ModeNormal
 		return a, nil
 	}
@@ -1008,9 +1174,20 @@ func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		h := vs.items[idx].(HistoryItem)
-		return a, a.doRequest("history.delete", map[string]string{"url": h.URL}, func(_ json.RawMessage) {
-			a.toast = fmt.Sprintf("Deleted %q from history", h.Title)
-		})
+		hURL, hTitle := h.URL, h.Title
+		target := a.targetSelector()
+		return a, func() tea.Msg {
+			_, err := a.client.Request(a.ctx, "history.delete", map[string]string{"url": hURL}, target)
+			if err != nil {
+				return errMsg{err}
+			}
+			a.toast = fmt.Sprintf("Deleted %q from history", hTitle)
+			resp, err := a.client.Request(a.ctx, "history.search", map[string]string{"query": ""}, target)
+			if err != nil {
+				return toastMsg(a.toast)
+			}
+			return refreshMsg{payload: resp.Payload}
+		}
 	}
 
 	// Search: delete saved search
@@ -1019,9 +1196,19 @@ func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 		idx := vs.realIndex(vs.cursor)
 		if idx < len(vs.items) {
 			if saved, ok := vs.items[idx].(SavedSearchItem); ok {
-				return a, a.doRequest("search.saved.delete", map[string]string{"id": saved.ID}, func(_ json.RawMessage) {
-					a.toast = fmt.Sprintf("Deleted saved search %q", saved.Name)
-				})
+				savedID, savedName := saved.ID, saved.Name
+				return a, func() tea.Msg {
+					_, err := a.client.Request(a.ctx, "search.saved.delete", map[string]string{"id": savedID}, nil)
+					if err != nil {
+						return errMsg{err}
+					}
+					a.toast = fmt.Sprintf("Deleted saved search %q", savedName)
+					resp, err := a.client.Request(a.ctx, "search.saved.list", nil, nil)
+					if err != nil {
+						return toastMsg(a.toast)
+					}
+					return refreshMsg{payload: resp.Payload}
+				}
 			}
 		}
 		return a, nil
@@ -1062,9 +1249,20 @@ func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 		idx := vs.realIndex(vs.cursor)
 		if idx < len(vs.items) {
 			g := vs.items[idx].(GroupItem)
-			return a, a.doRequest("groups.delete", map[string]any{"groupId": g.ID}, func(_ json.RawMessage) {
-				a.toast = fmt.Sprintf("Deleted group %q", g.Title)
-			})
+			groupID, groupTitle := g.ID, g.Title
+			target := a.targetSelector()
+			return a, func() tea.Msg {
+				_, err := a.client.Request(a.ctx, "groups.delete", map[string]any{"groupId": groupID}, target)
+				if err != nil {
+					return errMsg{err}
+				}
+				a.toast = fmt.Sprintf("Deleted group %q", groupTitle)
+				resp, err := a.client.Request(a.ctx, "groups.list", nil, target)
+				if err != nil {
+					return toastMsg(a.toast)
+				}
+				return refreshMsg{payload: resp.Payload}
+			}
 		}
 		return a, nil
 	}
@@ -1077,21 +1275,51 @@ func (a *App) handleConfirmDeleteKey(key string) (tea.Model, tea.Cmd) {
 
 	switch a.view {
 	case ViewSessions:
-		return a, a.doRequest("sessions.delete", map[string]string{"name": name}, func(_ json.RawMessage) {
+		return a, func() tea.Msg {
+			_, err := a.client.Request(a.ctx, "sessions.delete", map[string]string{"name": name}, nil)
+			if err != nil {
+				return errMsg{err}
+			}
 			a.toast = fmt.Sprintf("Deleted %q", name)
-		})
+			delete(a.expandedSessions, name)
+			resp, err := a.client.Request(a.ctx, "sessions.list", nil, nil)
+			if err != nil {
+				return toastMsg(fmt.Sprintf("Deleted %q (refresh failed)", name))
+			}
+			return refreshMsg{payload: resp.Payload}
+		}
 	case ViewCollections:
-		return a, a.doRequest("collections.delete", map[string]string{"name": name}, func(_ json.RawMessage) {
+		return a, func() tea.Msg {
+			_, err := a.client.Request(a.ctx, "collections.delete", map[string]string{"name": name}, nil)
+			if err != nil {
+				return errMsg{err}
+			}
 			a.toast = fmt.Sprintf("Deleted %q", name)
-		})
+			delete(a.expandedCollections, name)
+			resp, err := a.client.Request(a.ctx, "collections.list", nil, nil)
+			if err != nil {
+				return toastMsg(fmt.Sprintf("Deleted %q (refresh failed)", name))
+			}
+			return refreshMsg{payload: resp.Payload}
+		}
 	case ViewWorkspaces:
 		vs := a.currentView()
 		idx := vs.realIndex(vs.cursor)
 		if idx < len(vs.items) {
 			ws := vs.items[idx].(WorkspaceItem)
-			return a, a.doRequest("workspace.delete", map[string]any{"id": ws.ID}, func(_ json.RawMessage) {
-				a.toast = fmt.Sprintf("Deleted workspace %q", ws.Name)
-			})
+			wsID, wsName := ws.ID, ws.Name
+			return a, func() tea.Msg {
+				_, err := a.client.Request(a.ctx, "workspace.delete", map[string]any{"id": wsID}, nil)
+				if err != nil {
+					return errMsg{err}
+				}
+				a.toast = fmt.Sprintf("Deleted workspace %q", wsName)
+				resp, err := a.client.Request(a.ctx, "workspace.list", nil, nil)
+				if err != nil {
+					return toastMsg(fmt.Sprintf("Deleted %q (refresh failed)", wsName))
+				}
+				return refreshMsg{payload: resp.Payload}
+			}
 		}
 	}
 
@@ -1207,6 +1435,7 @@ func (a *App) applyRefresh(payload json.RawMessage) {
 			vs.items[i] = t
 		}
 		vs.itemCount = len(tabs)
+		a.pendingPreviewFetch = true
 	case ViewGroups:
 		groups := parsePayload[GroupItem](payload, "groups")
 		vs.items = make([]any, len(groups))
@@ -1249,7 +1478,14 @@ func (a *App) applyRefresh(payload json.RawMessage) {
 		}
 	case ViewBookmarks:
 		rawTree := parsePayload[BookmarkItem](payload, "tree")
+		firstLoad := a.bookmarkTree == nil
 		a.bookmarkTree = rawTree // save for re-flatten on fold/unfold
+		if firstLoad {
+			// Default to all-folded on first load
+			for _, item := range rawTree {
+				a.foldAllBookmarks(item)
+			}
+		}
 		flat := flattenBookmarkTreeWithCollapse(rawTree, 0, a.collapsedFolders)
 		vs.items = make([]any, len(flat))
 		for i, b := range flat {
@@ -1459,17 +1695,29 @@ func (a *App) handleEnter() tea.Cmd {
 	case ViewGroups:
 		if idx < len(vs.items) {
 			g := vs.items[idx].(GroupItem)
-			// Toggle collapsed state
-			return a.doRequest("groups.update", map[string]any{
-				"groupId":   g.ID,
-				"collapsed": !g.Collapsed,
-			}, func(_ json.RawMessage) {
+			newCollapsed := !g.Collapsed
+			groupID := g.ID
+			groupTitle := g.Title
+			target := a.targetSelector()
+			return func() tea.Msg {
+				_, err := a.client.Request(a.ctx, "groups.update", map[string]any{
+					"groupId":   groupID,
+					"collapsed": newCollapsed,
+				}, target)
+				if err != nil {
+					return errMsg{err}
+				}
 				state := "expanded"
-				if !g.Collapsed {
+				if newCollapsed {
 					state = "collapsed"
 				}
-				a.toast = fmt.Sprintf("Group %q %s", g.Title, state)
-			})
+				a.toast = fmt.Sprintf("Group %q %s", groupTitle, state)
+				resp, err := a.client.Request(a.ctx, "groups.list", nil, target)
+				if err != nil {
+					return toastMsg(a.toast)
+				}
+				return refreshMsg{payload: resp.Payload}
+			}
 		}
 	case ViewTargets:
 		if idx < len(vs.items) {
@@ -1665,9 +1913,13 @@ func (a *App) fetchTabPreview() tea.Cmd {
 
 	target := a.targetSelector()
 
-	if a.previewMode == 1 {
+	if a.previewMode == 0 || a.previewMode == 1 {
 		// Text preview: inject content script to extract page text
+		// Mode 0 (info): shows excerpt; Mode 1 (text): shows full text
 		tabID := tab.ID
+		if _, ok := a.previewText[tabID]; ok {
+			return nil // already cached
+		}
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer cancel()
@@ -1924,15 +2176,33 @@ func (a *App) handleRestore() tea.Cmd {
 }
 
 func (a *App) saveSession(name string) tea.Cmd {
-	return a.doRequest("sessions.save", map[string]string{"name": name}, func(_ json.RawMessage) {
+	return func() tea.Msg {
+		_, err := a.client.Request(a.ctx, "sessions.save", map[string]string{"name": name}, nil)
+		if err != nil {
+			return errMsg{err}
+		}
 		a.toast = fmt.Sprintf("Saved session %q", name)
-	})
+		resp, err := a.client.Request(a.ctx, "sessions.list", nil, nil)
+		if err != nil {
+			return toastMsg(a.toast)
+		}
+		return refreshMsg{payload: resp.Payload}
+	}
 }
 
 func (a *App) createCollection(name string) tea.Cmd {
-	return a.doRequest("collections.create", map[string]string{"name": name}, func(_ json.RawMessage) {
+	return func() tea.Msg {
+		_, err := a.client.Request(a.ctx, "collections.create", map[string]string{"name": name}, nil)
+		if err != nil {
+			return errMsg{err}
+		}
 		a.toast = fmt.Sprintf("Created collection %q", name)
-	})
+		resp, err := a.client.Request(a.ctx, "collections.list", nil, nil)
+		if err != nil {
+			return toastMsg(a.toast)
+		}
+		return refreshMsg{payload: resp.Payload}
+	}
 }
 
 func (a *App) switchWorkspace() tea.Cmd {
@@ -1981,9 +2251,68 @@ func (a *App) cancelDownload() tea.Cmd {
 		return nil
 	}
 	dl := vs.items[idx].(DownloadItem)
-	return a.doRequest("downloads.cancel", map[string]any{"id": dl.ID}, func(_ json.RawMessage) {
+	target := a.targetSelector()
+	return func() tea.Msg {
+		_, err := a.client.Request(a.ctx, "downloads.cancel", map[string]any{"id": dl.ID}, target)
+		if err != nil {
+			return errMsg{err}
+		}
 		a.toast = fmt.Sprintf("Cancelled download: %s", truncate(dl.Filename, 30))
-	})
+		resp, err := a.client.Request(a.ctx, "downloads.list", nil, target)
+		if err != nil {
+			return toastMsg(a.toast)
+		}
+		return refreshMsg{payload: resp.Payload}
+	}
+}
+
+func (a *App) reorderCollectionItem(direction int) tea.Cmd {
+	vs := a.currentView()
+	idx := vs.realIndex(vs.cursor)
+	if idx >= len(vs.items) {
+		return nil
+	}
+	nested, ok := vs.items[idx].(NestedTabItem)
+	if !ok {
+		return nil
+	}
+	parentName := nested.ParentName
+	tabs, ok := a.expandedCollections[parentName]
+	if !ok {
+		return nil
+	}
+	// Find this item's position within the parent collection
+	localIdx := -1
+	for i, t := range tabs {
+		if t.URL == nested.URL {
+			localIdx = i
+			break
+		}
+	}
+	if localIdx < 0 {
+		return nil
+	}
+	newIdx := localIdx + direction
+	if newIdx < 0 || newIdx >= len(tabs) {
+		return nil
+	}
+	return func() tea.Msg {
+		_, err := a.client.Request(a.ctx, "collections.reorder", map[string]any{
+			"name":      parentName,
+			"fromIndex": localIdx,
+			"toIndex":   newIdx,
+		}, nil)
+		if err != nil {
+			return errMsg{err}
+		}
+		// Update local cache
+		item := tabs[localIdx]
+		tabs = append(tabs[:localIdx], tabs[localIdx+1:]...)
+		tabs = append(tabs[:newIdx], append([]NestedTabItem{item}, tabs[newIdx:]...)...)
+		a.expandedCollections[parentName] = tabs
+		a.rebuildCollectionItems()
+		return refreshMsg{}
+	}
 }
 
 func (a *App) setDefaultTarget() tea.Cmd {
@@ -1996,9 +2325,18 @@ func (a *App) setDefaultTarget() tea.Cmd {
 		return nil
 	}
 	t := vs.items[idx].(TargetItem)
-	return a.doRequest("targets.default", map[string]string{"targetId": t.TargetID}, func(_ json.RawMessage) {
+	return func() tea.Msg {
+		_, err := a.client.Request(a.ctx, "targets.default", map[string]string{"targetId": t.TargetID}, nil)
+		if err != nil {
+			return errMsg{err}
+		}
 		a.toast = fmt.Sprintf("Default target: %s", t.TargetID)
-	})
+		resp, err := a.client.Request(a.ctx, "targets.list", nil, nil)
+		if err != nil {
+			return toastMsg(a.toast)
+		}
+		return refreshMsg{payload: resp.Payload}
+	}
 }
 
 func (a *App) showToast(msg string) tea.Cmd {
@@ -2048,7 +2386,7 @@ func (a *App) moveCursor(delta int) {
 	vs.cursor += delta
 	vs.clampCursor()
 	// Track cursor change for preview refresh
-	if a.view == ViewTabs && vs.cursor != oldCursor && a.previewMode > 0 {
+	if a.view == ViewTabs && vs.cursor != oldCursor {
 		a.pendingPreviewFetch = true
 	}
 }
@@ -2223,8 +2561,8 @@ func (a *App) renderHeader() string {
 }
 
 func (a *App) renderContent(maxLines int) string {
-	// Split view for Tabs, Sessions, Collections
-	if a.view == ViewTabs || a.view == ViewSessions || a.view == ViewCollections {
+	// Split view for Tabs only
+	if a.view == ViewTabs {
 		return a.renderSplitContent(maxLines)
 	}
 
@@ -2458,34 +2796,6 @@ func (a *App) renderPreviewPanel(vs *ViewState, panelW, maxLines int) []string {
 				lines = append(lines, styleWarnText(fmt.Sprintf("Loading text... (tabId=%d, target=%s)", v.ID, a.selectedTarget)))
 			}
 
-		case 2: // Screenshot preview
-			modes := styleDim.Render("[v:info]  [v:text]  ") + styleAccent.Render("[screenshot]")
-			lines = append(lines, modes)
-			lines = append(lines, "")
-			if imgPath, ok := a.previewImage[v.ID]; ok {
-				if strings.HasPrefix(imgPath, "(") {
-					// Error message
-					lines = append(lines, styleWarnText(imgPath))
-				} else {
-					// Kitty graphics protocol: display image from file
-					// \033_Gf=100,a=T,t=f,c=COLS,r=ROWS,q=2;\033\\
-					cols := panelW - 2
-					rows := maxLines - 5
-					if rows < 4 {
-						rows = 4
-					}
-					pathB64 := base64.StdEncoding.EncodeToString([]byte(imgPath))
-					kittySeq := fmt.Sprintf("\033_Gf=100,a=T,t=f,c=%d,r=%d,q=2;%s\033\\", cols, rows, pathB64)
-					lines = append(lines, kittySeq)
-					// Pad remaining lines so image has space
-					for i := 0; i < rows && len(lines) < maxLines-1; i++ {
-						lines = append(lines, "")
-					}
-				}
-			} else {
-				lines = append(lines, styleWarnText("Capturing screenshot..."))
-			}
-
 		default: // Info mode (0)
 			modes := styleAccent.Render("[info]") + styleDim.Render(" [v:text]  [s:screenshot]")
 			lines = append(lines, modes)
@@ -2514,10 +2824,21 @@ func (a *App) renderPreviewPanel(vs *ViewState, panelW, maxLines int) []string {
 				lines = append(lines, styleTitle.Render("Domain:   ")+styleURLDomain.Render(domain))
 			}
 
-			// Key hints
-			lines = append(lines, "")
-			lines = append(lines, styleDim.Render("Enter:activate  x:close  P:w3m"))
-			lines = append(lines, styleDim.Render("m:mute  p:pin  y·:copy  v:preview"))
+			// Text excerpt
+			if text, ok := a.previewText[v.ID]; ok && !strings.HasPrefix(text, "(") {
+				lines = append(lines, "")
+				lines = append(lines, styleDim.Render("── excerpt ──"))
+				for _, line := range strings.Split(text, "\n") {
+					if len(lines) >= maxLines-2 {
+						break
+					}
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					lines = append(lines, rwTruncate(line, panelW, "..."))
+				}
+			}
 		}
 
 	case SessionItem:

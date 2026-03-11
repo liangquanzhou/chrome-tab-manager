@@ -379,7 +379,7 @@
   - CHROME_API_ERROR: `captureVisibleTab` failed and debugger fallback also failed
 - Partial Failure: N/A
 - Idempotency: read-only (but may activate a tab as side effect when `tabId` is provided)
-- Notes: Primary method is `chrome.tabs.captureVisibleTab`. Falls back to `chrome.debugger` CDP `Page.captureScreenshot` if primary fails. If `tabId` is provided, activates that tab and waits 150ms before capture.
+- Notes: Primary method is `chrome.debugger` CDP `Page.captureScreenshot` (does not steal window focus). Falls back to `chrome.tabs.captureVisibleTab` if debugger attach fails. Fallback activates the tab and waits 150ms before capture. TUI `s` key captures and opens in external viewer.
 
 ---
 
@@ -791,6 +791,42 @@
 - Partial Failure: N/A (URLs not found in collection are silently ignored)
 - Idempotency: idempotent (removing already-removed URLs is a no-op)
 - Notes: Removes all items whose URL matches any in the `urls` list. Updates search index.
+
+---
+
+## collections.rename
+
+- Layer: local
+- Target: disallowed
+- CLI: internal
+- Request:
+  - name: string, required, current collection name
+  - newName: string, required, new collection name
+- Response:
+  - name: string, the new name
+- Errors:
+  - INVALID_PAYLOAD: name invalid, collection not found, new name already exists, or write failed
+- Idempotency: not idempotent (newName must differ from name; same-name errors with "already exists")
+- Notes: Renames the JSON file on disk. TUI guards against same-name input. Updates search index.
+
+---
+
+## collections.reorder
+
+- Layer: local
+- Target: disallowed
+- CLI: internal
+- Request:
+  - name: string, required
+  - fromIndex: int, required, source position (0-based)
+  - toIndex: int, required, destination position (0-based)
+- Response:
+  - name: string
+  - itemCount: int
+- Errors:
+  - INVALID_PAYLOAD: name invalid, collection not found, index out of range, or write failed
+- Idempotency: not idempotent (repeated calls keep moving)
+- Notes: Moves a single item within the collection. Updates search index.
 
 ---
 

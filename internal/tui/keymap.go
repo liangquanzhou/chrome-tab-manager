@@ -43,7 +43,7 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"m", "mute/unmute"},
 			{"p", "pin/unpin"},
 			{"v", "toggle preview"},
-			{"s", "screenshot"},
+			{"s", "screenshot (open)"},
 			{"P", "w3m preview"},
 			{"M", "move to window"},
 			{"A", "add to collection"},
@@ -63,15 +63,18 @@ func bindingsForView(v ViewType) []KeyBinding {
 			{"Enter", "preview"},
 			{"o", "restore"},
 			{"n", "save new"},
-			{"D D", "delete"},
+			{"x x", "delete"},
 		}
 	case ViewCollections:
 		return []KeyBinding{
 			{"Enter", "expand"},
 			{"o", "restore"},
 			{"n", "create new"},
+			{"e", "rename"},
 			{"x", "remove item"},
-			{"D D", "delete"},
+			{"x x", "delete collection"},
+			{"J/K", "move item"},
+			{"y·", "yank/copy"},
 		}
 	case ViewTargets:
 		return []KeyBinding{

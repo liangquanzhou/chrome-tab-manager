@@ -9,7 +9,7 @@ import (
 )
 
 func TestValidateName(t *testing.T) {
-	valid := []string{"work", "my-session", "test_123", "A", "a1b2c3"}
+	valid := []string{"work", "my-session", "test_123", "A", "a1b2c3", "工作", "我的收藏", "日本語テスト"}
 	for _, name := range valid {
 		if err := validateName(name); err != nil {
 			t.Errorf("validateName(%q) = %v, want nil", name, err)

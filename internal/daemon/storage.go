@@ -9,17 +9,17 @@ import (
 	"strings"
 )
 
-var nameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var nameRe = regexp.MustCompile(`^[\p{L}\p{N}_-]+$`)
 
 func validateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("name cannot be empty")
 	}
-	if len(name) > 128 {
+	if len([]rune(name)) > 128 {
 		return fmt.Errorf("name too long (max 128 characters)")
 	}
 	if !nameRe.MatchString(name) {
-		return fmt.Errorf("name contains invalid characters (allowed: a-z A-Z 0-9 _ -)")
+		return fmt.Errorf("name contains invalid characters (allowed: letters, digits, _ -)")
 	}
 	return nil
 }
